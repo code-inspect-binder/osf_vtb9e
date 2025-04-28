@@ -1,0 +1,869 @@
+---
+title: "Estimation of population models of interest in R using the nlme package"
+authors: "Ginette Lafit (ginette.lafit@kuleuven.be)"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preliminaries
+
+### Prelim - Installing libraries used in this script (whenever is necessary).
+
+```{r, echo=TRUE, warning=TRUE, results="hide", message=FALSE}
+# This code chunk simply makes sure that all the 
+# libraries used here are installed.
+packages <- c("nlme", "tidyr", "foreign", "data.table")
+if ( length(missing_pkgs <- setdiff(packages, 
+  rownames(installed.packages()))) > 0) {
+  message("Installing missing package(s): ", 
+          paste(missing_pkgs, collapse = ", "))
+  install.packages(missing_pkgs)
+}
+```
+
+### Prelim - Loading libraries used in this script.
+
+```{r}
+library(nlme) # to estimate linear-mixed effect models
+library(tidyverse) # reshaped data and variable transformation
+library(foreign) # load .sav data set
+library(data.table) # to create lagged outcome
+```
+
+## Data preprocessing
+
+For a given data set, we create the lagged outcome variable, person-mean centered the predictors, and create a predictor X^2:
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Create lag outcome
+data.dyad$Y.lag = rep(0,nrow(data.dyad))
+n.subject = unique(data.dyad$subject.ID)
+for (j in n.subject){
+data.dyad$Y.lag[which(data.dyad$subject.ID==j)] = shift(data.dyad$Y[which(data.dyad$subject.ID==j)])
+}
+
+# Person-mean centered the predictors
+data.dyad <- data.dyad %>% 
+group_by(subject.ID,dyad.ID) %>% 
+mutate(X.Actor.c = X.Actor - mean(X.Actor,na.rm = TRUE),
+       X.Partner.c = X.Partner - mean(X.Partner,na.rm = TRUE))
+
+# Compute quadratic variable
+data.dyad$X.Actor.c.2 = I(data.dyad$X.Actor.c^2)
+data.dyad$X.Partner.c.2 = I(data.dyad$X.Partner.c^2)
+```
+
+## Model estimation
+
+### Model 1: APIM 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+fit.Model.1 = lme(fixed = Y ~ -1 + Female + Female:X.Actor.c + 
+                  Female:X.Partner.c + Male + 
+                  Male:X.Actor.c + Male:X.Partner.c,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE))  
+
+summary(fit.Model.1)
+```
+
+### Model 2: APIM for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+fit.Model.2 = lme(fixed = Y ~ 1 + X.Actor.c + X.Partner.c,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.2)
+```
+
+
+### Model 3: Group differences in the actor and partner effects 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$Female.Z = data$Female*data$Z
+data$Male.Z = data$Male*data$Z
+data$X.Actor.c.Z = data$X.Actor.c*data$Z
+data$X.Partner.c.Z = data$X.Partner.c*data$Z
+
+# Model estimation
+
+fit.Model.3 = lme(fixed = Y ~ -1 + Female + Female.Z + 
+              Female:X.Actor.c + Female:X.Actor.c.Z + 
+              Female:X.Partner.c + Female:X.Partner.c.Z + 
+              Male + Male.Z + Male:X.Actor.c + Male:X.Actor.c.Z + 
+              Male:X.Partner.c + Male:X.Partner.c.Z,
+              random = ~ -1 + Female + Male |dyad.ID, 
+              correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+              weights = varIdent(form = ~1|Gender),
+              data = data, na.action=na.omit, 
+              control = lmeControl(optimizer="bobyqa", 
+                                   optCtrl=list(maxfun=2e5), 
+              maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.3)
+```
+
+### Model 4: Group differences in the actor and partner effects for indistinguishable dyads 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.c.Z = data$X.Actor.c*data$Z
+data$X.Partner.c.Z = data$X.Partner.c*data$Z
+
+# Model estimation
+
+fit.Model.4 = lme(fixed = Y ~ 1 + Z + X.Actor.c + X.Actor.c.Z + 
+                  X.Partner.c + X.Partner.c.Z,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.4)
+```
+
+### Model 5: Continuous time-varying moderator 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.c.C = data$X.Actor.c*data$C
+data$X.Partner.c.C = data$X.Partner.c*data$C
+
+# Model estimation
+
+fit.Model.5 = lme(fixed = Y ~ -1 + Female + 
+                  Female:X.Actor.c + Female:X.Partner.c +
+                  Female:C + Female:X.Actor.c.C + 
+                  Female:X.Partner.c.C + Male + 
+                  Male:X.Actor.c + Male:X.Partner.c + Male:C + 
+                  Male:X.Actor.c.C + Male:X.Partner.c.C,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.5)
+```
+
+### Model 6: Continuous time-varying moderator C for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.c.C = data$X.Actor.c*data$C
+data$X.Partner.c.C = data$X.Partner.c*data$C
+
+# Model estimation
+
+fit.Model.6 = lme(fixed = Y ~ 1 + X.Actor.c + X.Partner.c +
+                  C + X.Actor.c.C  + X.Partner.c.C,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.6)
+```
+
+### Model 7: Dichotomous time-varying moderator D 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.c.D = data$X.Actor.c*data$D
+data$X.Partner.c.D = data$X.Partner.c*data$D
+
+# Model estimation
+
+fit.Model.7 = lme(fixed = Y ~ -1 + Female + 
+                  Female:X.Actor.c + Female:X.Partner.c +
+                  Female:D + Female:X.Actor.c.D + Female:X.Partner.c.D + 
+                  Male + Male:X.Actor.c + Male:X.Partner.c + Male:D + 
+                  Male:X.Actor.c.D + Male:X.Partner.c.D,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.7)
+```
+
+### Model 8: Dichotomous time-varying moderator D for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.c.D = data$X.Actor.c*data$D
+data$X.Partner.c.W = data$X.Partner.c*data$D
+
+# Model estimation
+
+fit.Model.8 = lme(fixed = Y ~ 1 + X.Actor.c + X.Partner.c +
+                  D + X.Actor.c.D  + X.Partner.c.D,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.8)
+```
+
+### Model 9: APIM with curvilinear effects
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+fit.Model.9 = lme(fixed = Y ~ -1 + Female + 
+                  Female:X.Actor.c + Female:X.Actor.c.2 + 
+                  Female:X.Partner.c + Female:X.Partner.c.2 + Male + 
+                  Male:X.Actor.c + Male:X.Actor.c.2 + Male:X.Partner.c + 
+                  Male:X.Partner.c.2,
+                  random = ~ -1 + Female + Male |dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.9)
+```
+
+### Model 10: APIM with curvilinear effects for indistinguishable dyads 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+fit.Model.10 = lme(fixed = Y ~ 1 + X.Actor.c + X.Actor.c.2 + 
+                  X.Partner.c + X.Partner.c.2,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.10)
+```
+
+
+### Model 11: Group differences in the actor and partner effects with curvilinear effects
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$Female.Z = data$Female*data$Z
+data$Male.Z = data$Male*data$Z
+data$X.Actor.c.Z = data$X.Actor.c*data$Z
+data$X.Partner.c.Z = data$X.Partner.c*data$Z
+data$X.Actor.c.2.Z = data$X.Actor.c.2*data$Z
+data$X.Partner.c.2.Z = data$X.Partner.c.2*data$Z
+
+# Model estimation
+
+fit.Model.11 = lme(fixed = Y ~ -1 + Female + Female.Z + 
+                  Female:X.Actor.c + Female:X.Actor.c.2 + 
+                  Female:X.Actor.c.Z + Female:X.Actor.c.2.Z + 
+                  Female:X.Partner.c +  Female:X.Partner.c.2 + 
+                  Female:X.Partner.c.Z + Female:X.Partner.c.2.Z + 
+                  Male + Male.Z + 
+                  Male:X.Actor.c + Male:X.Actor.c.2 + 
+                  Male:X.Actor.c.Z + + Male:X.Actor.c.2.Z + 
+                  Male:X.Partner.c + Male:X.Partner.c.2 + 
+                  Male:X.Partner.c.Z + Male:X.Partner.c.2.Z,
+                  random = ~ -1 + Female + Male |dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  msMaxIter = 100, msVerbose = TRUE))
+
+summary(fit.Model.11)
+```
+
+### Model 12: Group differences in the actor and partner effects with curvilinear effects for indistinguishable dyads 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$Female.Z = data$Female*data$Z
+data$Male.Z = data$Male*data$Z
+data$X.Actor.c.Z = data$X.Actor.c*data$Z
+data$X.Partner.c.Z = data$X.Partner.c*data$Z
+data$X.Actor.c.2.Z = data$X.Actor.c.2*data$Z
+data$X.Partner.c.2.Z = data$X.Partner.c.2*data$Z
+
+# Model estimation
+
+fit.Model.12 = lme(fixed = Y ~ 1 + Z  + 
+                  X.Actor.c + X.Actor.c.2 + 
+                  X.Actor.c.Z + X.Actor.c.2.Z + 
+                  X.Partner.c + X.Partner.c.2 + 
+                  X.Partner.c.Z + X.Partner.c.2.Z,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.12)
+```
+
+### Model 13: Continuous time-varying moderator C with curvilinear effects
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.C.c = data$X.Actor.c*data$C.c
+data$X.Partner.C.c = data$X.Partner.c*data$C.c
+data$X.Actor.C.c.2 = data$X.Actor.c.2*data$C.c
+data$X.Partner.C.c.2 = data$X.Partner.c.2*data$C.c
+
+# Model estimation
+
+fit.Model.13 = lme(fixed = Y ~ -1 + Female + 
+                  Female:X.Actor.c + Female:X.Actor.c.2 + 
+                  Female:X.Partner.c + Female:X.Partner.c.2 +
+                  Female:C.c + Female:X.Actor.C.c + Female:X.Actor.C.c.2 +
+                  Female:X.Partner.C.c + Female:X.Partner.C.c.2 + 
+                  Male + Male:X.Actor.c + Male:X.Actor.c.2 + 
+                  Male:X.Partner.c + Male:X.Partner.c.2 + 
+                  Male:C.c + Male:X.Actor.C.c + Male:X.Actor.C.c.2 + 
+                  Male:X.Partner.C.c + Male:X.Partner.C.c.2,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE)) 
+
+summary(fit.Model.13)
+```
+
+### Model 14: Continuous time-varying dyad moderator with curvilinear effects for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.C.c = data$X.Actor.c*data$C.c
+data$X.Partner.C.c = data$X.Partner.c*data$C.c
+data$X.Actor.C.c.2 = data$X.Actor.c.2*data$C.c
+data$X.Partner.C.c.2 = data$X.Partner.c.2*data$C.c
+
+# Model estimation
+
+fit.Model.14 = lme(fixed = Y ~ 1 + X.Actor.c + X.Actor.c.2 + 
+                  X.Partner.c + X.Partner.c.2 +
+                  C.c + X.Actor.C.c + X.Actor.C.c.2 +
+                  X.Partner.C.c + X.Partner.C.c.2,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.14)
+```
+
+### Model 15: Dichotomous time-varying moderator D with curvilinear effects 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.D.c = data$X.Actor.c*data$D.c
+data$X.Partner.D.c = data$X.Partner.c*data$D.c
+data$X.Actor.D.c.2 = data$X.Actor.c.2*data$D.c
+data$X.Partner.D.c.2 = data$X.Partner.c.2*data$D.c
+
+# Model estimation
+
+fit.Model.15 = lme(fixed = Y ~ -1 + Female + 
+                  Female:X.Actor.c + Female:X.Actor.c.2 + 
+                  Female:X.Partner.c + Female:X.Partner.c.2 +
+                  Female:D.c + Female:X.Actor.D.c + Female:X.Actor.D.c.2 +
+                  Female:X.Partner.D.c + Female:X.Partner.D.c.2 + 
+                  Male + Male:X.Actor.c + Male:X.Actor.c.2 + 
+                  Male:X.Partner.c + Male:X.Partner.c.2 + 
+                  Male:D.c + Male:X.Actor.D.c + Male:X.Actor.D.c.2 + 
+                  Male:X.Partner.D.c + Male:X.Partner.D.c.2,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE)) 
+
+summary(fit.Model.15)
+```
+
+### Model 16: Dichotomous time-varying moderator D with curvilinear effects for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.D.c = data$X.Actor.c*data$D.c
+data$X.Partner.D.c = data$X.Partner.c*data$D.c
+data$X.Actor.D.c.2 = data$X.Actor.c.2*data$D.c
+data$X.Partner.D.c.2 = data$X.Partner.c.2*data$D.c
+
+# Model estimation
+
+fit.Model.16 = lme(fixed = Y ~ 1 + X.Actor.c + X.Actor.c.2 + 
+                  X.Partner.c + X.Partner.c.2 +
+                  D.c + X.Actor.D.c + X.Actor.D.c.2 +
+                  X.Partner.D.c + X.Partner.D.c.2,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.16)
+```
+
+
+### Model 17: APIM 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+fit.Model.17 = lme(fixed = Y ~ -1 + 
+                  Female + Female:Y.lag +
+                  Female:X.Actor.c + Female:X.Partner.c + 
+                  Male + Male:Y.lag +
+                  Male:X.Actor.c + Male:X.Partner.c,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE)) 
+
+summary(fit.Model.17)
+```
+
+### Model 18: APIM for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+fit.Model.18 = lme(fixed = Y ~ 1 + Y.lag +
+                  X.Actor.c + X.Partner.c,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE)) 
+
+summary(fit.Model.18)
+```
+
+
+### Model 19: Group differences in the actor and partner effects 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$Female.Z = data$Female*data$Z
+data$Male.Z = data$Male*data$Z
+data$X.Actor.c.Z = data$X.Actor.c*data$Z
+data$X.Partner.c.Z = data$X.Partner.c*data$Z
+data$Y.lag.Z = data$Y.lag*data$Z
+
+# Model estimation
+
+fit.Model.19 = lme(fixed = Y ~ -1 + Female + Female:Y.lag + 
+              Female:Y.lag.Z + Female.Z + 
+              Female:X.Actor.c + Female:X.Actor.c.Z + 
+              Female:X.Partner.c + Female:X.Partner.c.Z + 
+              Male + Male.Z + 
+              Male:Y.lag + Male:Y.lag.Z + 
+              Male:X.Actor.c + Male:X.Actor.c.Z + 
+              Male:X.Partner.c + Male:X.Partner.c.Z,
+              random = ~ -1 + Female + Male |dyad.ID, 
+              correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+              weights = varIdent(form = ~1|Gender),
+              data = data, na.action=na.omit, 
+              control = lmeControl(optimizer="bobyqa", 
+                                   optCtrl=list(maxfun=2e5), 
+              maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.19)
+```
+
+### Model 20: Group differences in the actor and partner effects for indistinguishable dyads 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.c.Z = data$X.Actor.c*data$Z
+data$X.Partner.c.Z = data$X.Partner.c*data$Z
+data$Y.lag.Z = data$Y.lag*data$Z
+
+# Model estimation
+
+fit.Model.20 = lme(fixed = Y ~ 1 + Z + 
+                  Y.lag + Y.lag.Z +
+                  X.Actor.c + X.Actor.c.Z + 
+                  X.Partner.c + X.Partner.c.Z,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.20)
+```
+
+### Model 21: Continuous time-varying moderator C
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.c.C = data$X.Actor.c*data$C
+data$X.Partner.c.C = data$X.Partner.c*data$C
+
+# Model estimation
+
+fit.Model.21 = lme(fixed = Y ~ -1 + 
+                  Female + Female:Y.lag +
+                  Female:X.Actor.c + Female:X.Partner.c +
+                  Female:C + Female:X.Actor.c.C + Female:X.Partner.c.C + 
+                  Male + Male:Y.lag +
+                  Male:X.Actor.c + Male:X.Partner.c + Male:C + 
+                  Male:X.Actor.c.C + Male:X.Partner.c.C,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.21)
+```
+
+### Model 22: Continuous time-varying moderator C for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.c.C = data$X.Actor.c*data$C
+data$X.Partner.c.C = data$X.Partner.c*data$C
+
+# Model estimation
+
+fit.Model.22 = lme(fixed = Y ~ 1 + Y.lag +
+                  X.Actor.c + X.Partner.c +
+                  C + X.Actor.c.C  + X.Partner.c.C,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.22)
+```
+
+### Model 23: Dichotomous time-varying moderator D 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.c.D = data$X.Actor.c*data$D
+data$X.Partner.c.D = data$X.Partner.c*data$D
+
+# Model estimation
+
+fit.Model.23 = lme(fixed = Y ~ -1 + 
+                  Female + Female:Y.lag + 
+                  Female:X.Actor.c + Female:X.Partner.c +
+                  Female:D + Female:X.Actor.c.D + Female:X.Partner.c.D + 
+                  Male + Male:Y.lag + 
+                  Male:X.Actor.c + Male:X.Partner.c + Male:D + 
+                  Male:X.Actor.c.D + Male:X.Partner.c.D,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.23)
+```
+
+### Model 24: Dichotomous time-varying moderator D for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.c.D = data$X.Actor.c*data$D
+data$X.Partner.c.W = data$X.Partner.c*data$D
+
+# Model estimation
+
+fit.Model.24 = lme(fixed = Y ~ 1 + Y.lag +
+                  X.Actor.c + X.Partner.c +
+                  D + X.Actor.c.D  + X.Partner.c.D,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.24)
+```
+
+### Model 25: APIM with curvilinear effects
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+fit.Model.25 = lme(fixed = Y ~ -1 + 
+                  Female + Female:Y.lag +
+                  Female:X.Actor.c + Female:X.Actor.c.2 + 
+                  Female:X.Partner.c + Female:X.Partner.c.2 + 
+                  Male + Male:Y.lag + 
+                  Male:X.Actor.c + Male:X.Actor.c.2 + Male:X.Partner.c + 
+                  Male:X.Partner.c.2,
+                  random = ~ -1 + Female + Male |dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE)) 
+
+summary(fit.Model.25)
+```
+
+### Model 26: APIM with curvilinear effects for indistinguishable dyads 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+fit.Model.26 = lme(fixed = Y ~ 1 + Y.lag +
+                  X.Actor.c + X.Actor.c.2 + 
+                  X.Partner.c + X.Partner.c.2,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE)) 
+
+summary(fit.Model.26)
+```
+
+
+### Model 27: Group differences in the actor and partner effects with curvilinear effects
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$Female.Z = data$Female*data$Z
+data$Male.Z = data$Male*data$Z
+data$X.Actor.c.Z = data$X.Actor.c*data$Z
+data$X.Partner.c.Z = data$X.Partner.c*data$Z
+data$X.Actor.c.2.Z = data$X.Actor.c.2*data$Z
+data$X.Partner.c.2.Z = data$X.Partner.c.2*data$Z
+
+# Model estimation
+
+fit.Model.27 = lme(fixed = Y ~ -1 + Female + Female.Z +
+                  Female:Y.lag + Female:Y.lag.Z +
+                  Female:X.Actor.c + Female:X.Actor.c.2 + 
+                  Female:X.Actor.c.Z + Female:X.Actor.c.2.Z + 
+                  Female:X.Partner.c +  Female:X.Partner.c.2 + 
+                  Female:X.Partner.c.Z + Female:X.Partner.c.2.Z + 
+                  Male + Male.Z + 
+                  Male:Y.lag + Male:Y.lag.Z +
+                  Male:X.Actor.c + Male:X.Actor.c.2 + 
+                  Male:X.Actor.c.Z + + Male:X.Actor.c.2.Z + 
+                  Male:X.Partner.c + Male:X.Partner.c.2 + 
+                  Male:X.Partner.c.Z + Male:X.Partner.c.2.Z,
+                  random = ~ -1 + Female + Male |dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  msMaxIter = 100, msVerbose = TRUE))
+
+summary(fit.Model.27)
+```
+
+### Model 28: Group differences in the actor and partner effects with curvilinear effects for indistinguishable dyads 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$Female.Z = data$Female*data$Z
+data$Male.Z = data$Male*data$Z
+data$X.Actor.c.Z = data$X.Actor.c*data$Z
+data$X.Partner.c.Z = data$X.Partner.c*data$Z
+data$X.Actor.c.2.Z = data$X.Actor.c.2*data$Z
+data$X.Partner.c.2.Z = data$X.Partner.c.2*data$Z
+
+# Model estimation
+
+fit.Model.28 = lme(fixed = Y ~ 1 + Z  +
+                  Y.lag + Y.lag.Z +
+                  X.Actor.c + X.Actor.c.2 + 
+                  X.Actor.c.Z + X.Actor.c.2.Z + 
+                  X.Partner.c + X.Partner.c.2 + 
+                  X.Partner.c.Z + X.Partner.c.2.Z,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.28)
+```
+
+### Model 29: Continuous time-varying moderator C with curvilinear effects
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.C.c = data$X.Actor.c*data$C.c
+data$X.Partner.C.c = data$X.Partner.c*data$C.c
+data$X.Actor.C.c.2 = data$X.Actor.c.2*data$C.c
+data$X.Partner.C.c.2 = data$X.Partner.c.2*data$C.c
+
+# Model estimation
+
+fit.Model.29 = lme(fixed = Y ~ -1 + 
+                  Female + Female:Y.lag + 
+                  Female:X.Actor.c + Female:X.Actor.c.2 + 
+                  Female:X.Partner.c + Female:X.Partner.c.2 +
+                  Female:W.c + Female:X.Actor.C.c + Female:X.Actor.C.c.2 +
+                  Female:X.Partner.C.c + Female:X.Partner.C.c.2 + 
+                  Male + Male:Y.lag + 
+                  Male:X.Actor.c + Male:X.Actor.c.2 + 
+                  Male:X.Partner.c + Male:X.Partner.c.2 + 
+                  Male:C.c + Male:X.Actor.C.c + Male:X.Actor.C.c.2 + 
+                  Male:X.Partner.C.c + Male:X.Partner.C.c.2,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE)) 
+
+summary(fit.Model.29)
+```
+
+### Model 30: Continuous time-varying moderator C with curvilinear effects for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.C.c = data$X.Actor.c*data$C.c
+data$X.Partner.C.c = data$X.Partner.c*data$C.c
+data$X.Actor.C.c.2 = data$X.Actor.c.2*data$C.c
+data$X.Partner.C.c.2 = data$X.Partner.c.2*data$C.c
+
+# Model estimation
+
+fit.Model.30 = lme(fixed = Y ~ 1 + Y.lag +
+                  X.Actor.c + X.Actor.c.2 + 
+                  X.Partner.c + X.Partner.c.2 +
+                  C.c + X.Actor.C.c + X.Actor.C.c.2 +
+                  X.Partner.C.c + X.Partner.C.c.2,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.30)
+```
+
+### Model 31: Dichotomous time-varying moderator D with curvilinear effects 
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.D.c = data$X.Actor.c*data$D.c
+data$X.Partner.D.c = data$X.Partner.c*data$D.c
+data$X.Actor.D.c.2 = data$X.Actor.c.2*data$D.c
+data$X.Partner.D.c.2 = data$X.Partner.c.2*data$D.c
+
+# Model estimation
+
+fit.Model.31 = lme(fixed = Y ~ -1 + 
+                  Female + Female:Y.lag +
+                  Female:X.Actor.c + Female:X.Actor.c.2 + 
+                  Female:X.Partner.c + Female:X.Partner.c.2 +
+                  Female:D.c + Female:X.Actor.D.c + Female:X.Actor.D.c.2 +
+                  Female:X.Partner.D.c + Female:X.Partner.D.c.2 + 
+                  Male + Male:Y.lag +
+                  Male:X.Actor.c + Male:X.Actor.c.2 + 
+                  Male:X.Partner.c + Male:X.Partner.c.2 + 
+                  Male:D.c + Male:X.Actor.D.c + Male:X.Actor.D.c.2 + 
+                  Male:X.Partner.D.c + Male:X.Partner.D.c.2,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE)) 
+
+summary(fit.Model.31)
+```
+
+### Model 32: Dichotomous time-varying moderator D with curvilinear effects for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=FALSE}
+# Compute interactions
+data$X.Actor.D.c = data$X.Actor.c*data$D.c
+data$X.Partner.D.c = data$X.Partner.c*data$D.c
+data$X.Actor.D.c.2 = data$X.Actor.c.2*data$D.c
+data$X.Partner.D.c.2 = data$X.Partner.c.2*data$D.c
+
+# Model estimation
+
+fit.Model.32 = lme(fixed = Y ~ 1 + Y.lag +
+                  X.Actor.c + X.Actor.c.2 + 
+                  X.Partner.c + X.Partner.c.2 +
+                  D.c + X.Actor.D.c + X.Actor.D.c.2 +
+                  X.Partner.D.c + X.Partner.D.c.2,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = TRUE))
+
+summary(fit.Model.32)
+```
+

@@ -1,0 +1,1039 @@
+---
+title: "Estimation of population models of interest in R using the nlme package"
+authors: "Ginette Lafit (ginette.lafit@kuleuven.be)"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preliminaries
+
+### Prelim - Installing libraries used in this script (whenever is necessary).
+
+```{r, echo=TRUE, warning=TRUE, results="hide", message=FALSE}
+# This code chunk simply makes sure that all the 
+# libraries used here are installed.
+packages <- c("nlme", "tidyr", "foreign", "data.table")
+if ( length(missing_pkgs <- setdiff(packages, 
+  rownames(installed.packages()))) > 0) {
+  message("Installing missing package(s): ", 
+          paste(missing_pkgs, collapse = ", "))
+  install.packages(missing_pkgs)
+}
+```
+
+### Prelim - Loading libraries used in this script.
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+library(nlme) # to estimate linear-mixed effect models
+library(tidyverse) # reshaped data and variable transformation
+library(foreign) # load .sav data set
+library(data.table) # to create lagged outcome
+library(kableExtra) # to create nice tables
+```
+
+## Data preprocessing
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Load person period data set
+data.person = read.spss("ESM_8.sav", to.data.frame=TRUE)
+data.person = data.frame(data.person)
+
+# Select variable to use 
+data.person = data.person[,c('couple','ppnr','beepnr','DayESM','happy','relaxed','enact_respons','together_0','together_1')]
+
+# Create lag outcome: lag within-persons and within-days
+data.person$happy.lag = rep(0,nrow(data.person))
+data.person$relaxed.lag = rep(0,nrow(data.person))
+n.subject = unique(data.person$ppnr)
+for (j in n.subject){
+ni.day = unique(data.person$DayESM[which(data.person$ppnr==j)])  
+for (t in ni.day){
+t.ni = which(data.person$ppnr==j)[which(data.person$DayESM[which(data.person$ppnr==j)] == t)]  
+data.person$happy.lag[t.ni] = shift(data.person$happy[t.ni])
+data.person$relaxed.lag[t.ni] = shift(data.person$relaxed[t.ni])
+}}
+
+# Create presence of partner variable 
+
+data.person$together = rowSums(cbind(1-data.person$together_0,data.person$together_1), na.rm=TRUE)
+
+data.person$together = ifelse(is.na(data.person$together_0) & is.na(data.person$together_1),NA,data.person$together)
+
+data.person = data.person[,c('couple','ppnr','beepnr','DayESM','happy','relaxed','happy.lag','relaxed.lag','enact_respons','together')]
+
+# Eliminate rows with Nas
+data.person = data.person[complete.cases(data.person), ]
+
+# create variable Gender
+data.person$Gender = ifelse(data.person$ppnr == data.person$couple,'F','M')
+
+# Re-shape the data into dyadic data set
+data.dyad = data.person[,c('couple','ppnr','beepnr','DayESM','Gender')]
+
+# Re-name the variables 
+colnames(data.dyad) = c('dyad.ID','subject.ID','Obs','Day','Gender')
+
+# Create variable Female and Male
+data.dyad$Female = ifelse(data.dyad$Gender == 'F',1,0)
+data.dyad$Male = ifelse(data.dyad$Gender == 'M',1,0)
+
+# Re-shape data set: Y (happy), X (enact_response)
+data.dyad$Y.happy = rep(0,nrow(data.dyad))
+data.dyad$Y.relaxed = rep(0,nrow(data.dyad))
+data.dyad$Y.happy.lag = rep(0,nrow(data.dyad))
+data.dyad$Y.relaxed.lag = rep(0,nrow(data.dyad))
+data.dyad$X.Actor = rep(0,nrow(data.dyad))
+data.dyad$X.Partner = rep(0,nrow(data.dyad))
+data.dyad$D.Actor = rep(0,nrow(data.dyad))
+data.dyad$D.Partner = rep(0,nrow(data.dyad))
+
+N.dyad = unique(data.dyad$dyad.ID)
+for (i in N.dyad){
+N.id = which(data.dyad$dyad.ID==i)
+
+data.dyad$Y.happy[N.id[which(data.person[N.id,]$Gender=='F')]] = data.person$happy[N.id[which(data.person[N.id,]$Gender=='F')]]
+
+data.dyad$Y.happy[N.id[which(data.dyad[N.id,]$Gender=='M')]] = data.person$happy[N.id[which(data.person[N.id,]$Gender=='M')]]
+
+data.dyad$Y.relaxed[N.id[which(data.person[N.id,]$Gender=='F')]] = data.person$relaxed[N.id[which(data.person[N.id,]$Gender=='F')]]
+
+data.dyad$Y.relaxed[N.id[which(data.dyad[N.id,]$Gender=='M')]] = data.person$relaxed[N.id[which(data.person[N.id,]$Gender=='M')]]
+
+data.dyad$Y.happy.lag[N.id[which(data.person[N.id,]$Gender=='F')]] = data.person$happy.lag[N.id[which(data.person[N.id,]$Gender=='F')]]
+
+data.dyad$Y.happy.lag[N.id[which(data.dyad[N.id,]$Gender=='M')]] = data.person$happy.lag[N.id[which(data.person[N.id,]$Gender=='M')]]
+
+data.dyad$Y.relaxed.lag[N.id[which(data.person[N.id,]$Gender=='F')]] = data.person$relaxed.lag[N.id[which(data.person[N.id,]$Gender=='F')]]
+
+data.dyad$Y.relaxed.lag[N.id[which(data.dyad[N.id,]$Gender=='M')]] = data.person$relaxed.lag[N.id[which(data.person[N.id,]$Gender=='M')]]
+
+data.dyad$X.Actor[N.id[which(data.dyad[N.id,]$Gender=='F')]] = data.person$enact_respons[N.id[which(data.person[N.id,]$Gender=='F')]] 
+
+data.dyad$X.Actor[N.id[which(data.dyad[N.id,]$Gender=='M')]] = data.person$enact_respons[N.id[which(data.person[N.id,]$Gender=='M')]] 
+
+data.dyad$X.Partner[N.id[which(data.dyad[N.id,]$Gender=='F')]] = data.person$enact_respons[N.id[which(data.person[N.id,]$Gender=='M')]]
+
+data.dyad$X.Partner[N.id[which(data.dyad[N.id,]$Gender=='M')]] = data.person$enact_respons[N.id[which(data.person[N.id,]$Gender=='F')]]
+
+data.dyad$D.Actor[N.id[which(data.dyad[N.id,]$Gender=='F')]] = data.person$together[N.id[which(data.person[N.id,]$Gender=='F')]] 
+
+data.dyad$D.Actor[N.id[which(data.dyad[N.id,]$Gender=='M')]] = data.person$together[N.id[which(data.person[N.id,]$Gender=='M')]] 
+
+data.dyad$D.Partner[N.id[which(data.dyad[N.id,]$Gender=='F')]] = data.person$together[N.id[which(data.person[N.id,]$Gender=='M')]]
+
+data.dyad$D.Partner[N.id[which(data.dyad[N.id,]$Gender=='M')]] = data.person$together[N.id[which(data.person[N.id,]$Gender=='F')]]
+}
+
+# Create variable dyad variable together
+data.dyad$D = data.dyad$D.Actor + data.dyad$D.Partner
+
+# Number of beeps where the both partners said they were together
+length(which(data.dyad$D==2))
+
+# Proportion of beeps where the both partners said they were together
+length(which(data.dyad$D==2))/length(data.dyad$D.Partner)
+
+# Number of beeps where the both partners said they were not together
+length(which(data.dyad$D==0))
+
+# Proportion of beeps where the both partners said they were not together
+length(which(data.dyad$D==0))/length(data.dyad$D.Partner)
+
+# Number of beeps where the both partners said they were disagree of being together
+length(which(data.dyad$D==1))
+
+# Proportion of beeps where the both partners said they were disagree of being together
+length(which(data.dyad$D==1))/length(data.dyad$D.Partner)
+
+# Select beeps where at least one of the dyad members said that they were together
+data.dyad$D = ifelse(data.dyad$D==2, 1, data.dyad$D)
+
+# Number of beeps where the both partners said they were at least one of the partners were together
+length(which(data.dyad$D==1))
+
+# Proportion of beeps where the both partners said they were at least one of the partners were together
+length(which(data.dyad$D==1))/length(data.dyad$D.Partner)
+
+```
+
+Next, we are going to create the lagged outcome variable, person-mean centered the predictors, and create a predictor X^2:
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Person-mean centered the predictors
+data.dyad <- data.dyad %>% 
+group_by(subject.ID,dyad.ID) %>% 
+mutate(X.Actor.c = X.Actor - mean(X.Actor,na.rm = TRUE),
+       X.Partner.c = X.Partner - mean(X.Partner,na.rm = TRUE))
+
+# Compute quadratic variable
+data.dyad$X.Actor.c.2 = I(data.dyad$X.Actor.c^2)
+data.dyad$X.Partner.c.2 = I(data.dyad$X.Partner.c^2)
+
+# Compute interactions
+data.dyad$X.Actor.c.D = data.dyad$X.Actor.c*data.dyad$D
+data.dyad$X.Partner.c.D = data.dyad$X.Partner.c*data.dyad$D
+data.dyad$X.Actor.c.D.2 = data.dyad$X.Actor.c.2*data.dyad$D
+data.dyad$X.Partner.c.D.2 = data.dyad$X.Partner.c.2*data.dyad$D
+
+head(data.dyad)
+```
+
+# Outcome: happy & predictor: enacted response
+
+## Model estimation
+
+### Model 1: APIM 
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.1 = lme(fixed = Y.happy ~ -1 + Female + Female:X.Actor.c + 
+                  Female:X.Partner.c + Male + 
+                  Male:X.Actor.c + Male:X.Partner.c,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE))  
+
+summary(fit.Model.1)
+intervals(fit.Model.1, level = 0.95)
+```
+
+### Model 2: APIM for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.2 = lme(fixed = Y.happy ~ 1 + X.Actor.c + X.Partner.c,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.2)
+intervals(fit.Model.2, level = 0.95)
+```
+
+### Model 7: Effect of the dichotomous time-varying moderator 
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.7 = lme(fixed = Y.happy ~ -1 + Female + 
+                  Female:X.Actor.c + Female:X.Partner.c + Female:D + 
+                  Female:X.Actor.c.D + Female:X.Partner.c.D + Male + 
+                  Male:X.Actor.c + Male:X.Partner.c + Male:D + 
+                  Male:X.Actor.c.D + Male:X.Partner.c.D,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  method = 'REML',
+                  control = lmeControl(optimizer="bobyqa", optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE))
+
+summary(fit.Model.7)
+intervals(fit.Model.7, level = 0.95)
+```
+
+### Model 8: Effect of the dichotomous time-varying moderator for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.8 = lme(fixed = Y.happy ~ 1 + X.Actor.c + X.Partner.c + D +                         
+                  X.Actor.c.D + X.Partner.c.D,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)),
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  method = 'REML',
+                  control = lmeControl(optimizer="bobyqa", optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.8)
+intervals(fit.Model.8, level = 0.95)
+```
+
+### Model 9: APIM with curvilinear effects
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.9 = lme(fixed = Y.happy ~ -1 + Female + 
+                  Female:X.Actor.c + Female:X.Actor.c.2 + 
+                  Female:X.Partner.c + Female:X.Partner.c.2 + Male + 
+                  Male:X.Actor.c + Male:X.Actor.c.2 + Male:X.Partner.c + 
+                  Male:X.Partner.c.2,
+                  random = ~ -1 + Female + Male |dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.9)
+intervals(fit.Model.9, level = 0.95)
+```
+
+### Model 10: APIM with curvilinear effects for indistinguishable dyads 
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.10 = lme(fixed = Y.happy ~ 1 + X.Actor.c + X.Actor.c.2 + 
+                  X.Partner.c + X.Partner.c.2,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.10)
+intervals(fit.Model.10, level = 0.95)
+```
+
+### Model 15: Effect of the dichotomous time-varying moderator with curvilinear effects
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.15 = lme(fixed = Y.happy ~ -1 + Female + 
+                  Female:X.Actor.c + Female:X.Actor.c.2 +
+                  Female:X.Partner.c + Female:X.Partner.c.2 + Female:D +
+                  Female:X.Actor.c.D + Female:X.Actor.c.D.2 + 
+                  Female:X.Partner.c.D + Female:X.Partner.c.D.2 + Male + 
+                  Male:X.Actor.c + Male:X.Actor.c.2 + Male:X.Partner.c +
+                  Male:X.Partner.c.2 + Male:D + 
+                  Male:X.Actor.c.D + Male:X.Actor.c.D.2 + Male:X.Partner.c.D + 
+                  Male:X.Partner.c.D.2,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  method = 'REML',
+                  control = lmeControl(optimizer="bobyqa", optCtrl=list(maxfun=2e5),                   maxIter=500, msMaxIter=500, msVerbose = FALSE))
+
+summary(fit.Model.15)
+intervals(fit.Model.15, level = 0.95)
+```
+
+### Model 16: Effect of the dichotomous time-varying moderator with curvilinear effects for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.16 = lme(fixed = Y.happy ~ 1 + X.Actor.c + 
+                  X.Actor.c.2 + X.Partner.c +
+                  X.Partner.c.2 + D +                         
+                  X.Actor.c.D + X.Actor.c.D.2 + X.Partner.c.D + + X.Partner.c.D.2,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)),
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  method = 'REML',
+                  control = lmeControl(optimizer="bobyqa", optCtrl=list(maxfun=2e5),                   maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.16)
+intervals(fit.Model.16, level = 0.95)
+```
+
+### Model 17: APIM 
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.17 = lme(fixed = Y.happy ~ -1 + 
+                  Female + Female:Y.happy.lag +
+                  Female:X.Actor.c + Female:X.Partner.c + 
+                  Male + Male:Y.happy.lag +
+                  Male:X.Actor.c + Male:X.Partner.c,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.17)
+intervals(fit.Model.17, level = 0.95)
+```
+
+### Model 18: APIM for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.18 = lme(fixed = Y.happy ~ 1 + Y.happy.lag +
+                  X.Actor.c + X.Partner.c,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.18)
+intervals(fit.Model.18, level = 0.95)
+```
+
+### Model 23: AR(1) APIM - Effect of the dichotomous time-varying moderator 
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.23 = lme(fixed = Y.happy ~ -1 + 
+                  Female + Female:Y.happy.lag + 
+                  Female:X.Actor.c + Female:X.Partner.c + Female:D + 
+                  Female:X.Actor.c.D + Female:X.Partner.c.D + 
+                  Male + Male:Y.happy.lag + 
+                  Male:X.Actor.c + Male:X.Partner.c + Male:D + 
+                  Male:X.Actor.c.D + Male:X.Partner.c.D,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  method = 'REML',
+                  control = lmeControl(optimizer="bobyqa", optCtrl=list(maxfun=2e5),                   maxIter=500, msMaxIter=500, msVerbose = FALSE))
+
+summary(fit.Model.23)
+intervals(fit.Model.23, level = 0.95)
+```
+
+### Model 24: AR(1) APIM - Effect of the dichotomous time-varying moderator for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.24 = lme(fixed = Y.happy ~ 1 + Y.happy.lag +
+                  X.Actor.c + X.Partner.c + D +                         
+                  X.Actor.c.D + X.Partner.c.D,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)),
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  method = 'REML',
+                  control = lmeControl(optimizer="bobyqa", optCtrl=list(maxfun=2e5),                   maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.24)
+intervals(fit.Model.24, level = 0.95)
+```
+
+### Model 25: AR(1) APIM with curvilinear effects
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.25 = lme(fixed = Y.happy ~ -1 + 
+                  Female + Female:Y.happy.lag +
+                  Female:X.Actor.c + Female:X.Actor.c.2 + 
+                  Female:X.Partner.c + Female:X.Partner.c.2 + 
+                  Male + Male:Y.happy.lag + 
+                  Male:X.Actor.c + Male:X.Actor.c.2 + Male:X.Partner.c + 
+                  Male:X.Partner.c.2,
+                  random = ~ -1 + Female + Male |dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.25)
+intervals(fit.Model.25, level = 0.95)
+```
+
+### Model 26: AR(1) APIM with curvilinear effects for indistinguishable dyads 
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.26 = lme(fixed = Y.happy ~ 1 + Y.happy.lag +
+                  X.Actor.c + X.Actor.c.2 + 
+                  X.Partner.c + X.Partner.c.2,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)), 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  control = lmeControl(optimizer="bobyqa", 
+                                       optCtrl=list(maxfun=2e5), 
+                  maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.26)
+intervals(fit.Model.26, level = 0.95)
+```
+
+### Model 31: AR(1) APIM - Effect of the dichotomous time-varying moderator with curvilinear effects
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.31 = lme(fixed = Y.happy ~ -1 + 
+                  Female + Female:Y.happy.lag +
+                  Female:X.Actor.c + Female:X.Actor.c.2 +
+                  Female:X.Partner.c + Female:X.Partner.c.2 + Female:D +
+                  Female:X.Actor.c.D + Female:X.Actor.c.D.2 + 
+                  Female:X.Partner.c.D + Female:X.Partner.c.D.2 + 
+                  Male + Male:Y.happy.lag +
+                  Male:X.Actor.c + Male:X.Actor.c.2 + Male:X.Partner.c +
+                  Male:X.Partner.c.2 + Male:D + 
+                  Male:X.Actor.c.D + Male:X.Actor.c.D.2 + Male:X.Partner.c.D + 
+                  Male:X.Partner.c.D.2,
+                  random = ~ -1 + Female + Male|dyad.ID, 
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  method = 'REML',
+                  control = lmeControl(optimizer="bobyqa", optCtrl=list(maxfun=2e5),                   maxIter=500, msMaxIter=500, msVerbose = FALSE))
+
+summary(fit.Model.31)
+intervals(fit.Model.31, level = 0.95)
+```
+
+### Model 32: AR(1) APIM - Effect of the dichotomous time-varying moderator with curvilinear effects for indistinguishable dyads
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+fit.Model.32 = lme(fixed = Y.happy ~ 1 + Y.happy.lag + 
+                  X.Actor.c + X.Actor.c.2 + X.Partner.c +
+                  X.Partner.c.2 + D +                         
+                  X.Actor.c.D + X.Actor.c.D.2 + 
+                  X.Partner.c.D + X.Partner.c.D.2,
+                  random = list(dyad.ID = pdCompSymm(~ Gender -1)),
+                  correlation = corCompSymm(form = ~1|dyad.ID/Obs),
+                  weights = varIdent(form = ~1|Gender),
+                  data = data.dyad, na.action=na.omit, 
+                  method = 'REML',
+                  control = lmeControl(optimizer="bobyqa", optCtrl=list(maxfun=2e5),                   maxIter=500, msMaxIter=500, msVerbose = FALSE)) 
+
+summary(fit.Model.32)
+intervals(fit.Model.32, level = 0.95)
+```
+
+# Table of coefficients 
+
+### Summary predictors
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Distribution of the predictors X
+mu.XF = mean(data.dyad$X.Actor[which(data.dyad$Gender=='F')],na.rm = TRUE)
+mu.XF
+sigma.XF = sd(data.dyad$X.Actor[which(data.dyad$Gender=='F')])
+sigma.XF
+mu.XM = mean(data.dyad$X.Actor[which(data.dyad$Gender=='M')],na.rm = TRUE)
+mu.XM
+sigma.XM = sd(data.dyad$X.Actor[which(data.dyad$Gender=='M')])
+sigma.XM
+rho.X = cor(cbind(data.dyad$X.Actor[which(data.dyad$Gender=='F')],
+                  data.dyad$X.Actor[which(data.dyad$Gender=='M')]))[1,2]
+rho.X
+
+# Proportion of beeps together
+prob.D = mean(data.dyad$D, na.rm = TRUE)
+prob.D
+
+```
+
+## Models for distinguishable dyads
+
+### Fixed effects
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Model 1
+coef.Model.1 = coef(summary(fit.Model.1))[,1] 
+pvalue.Model.1 = coef(summary(fit.Model.1))[,5] 
+sum.Model.1 = cbind(coef.Model.1,pvalue.Model.1)
+rownames(sum.Model.1) = c('c.F','c.M','a.FF','p.MF','a.MM','p.FM')
+colnames(sum.Model.1) = c('Coef.Model.1','p-value.Model.1')
+
+# Model 7
+coef.Model.7 = coef(summary(fit.Model.7))[,1] 
+pvalue.Model.7 = coef(summary(fit.Model.7))[,5]
+sum.Model.7 = cbind(coef.Model.7,pvalue.Model.7)
+rownames(sum.Model.7) = c('c.F','c.M','a.FF','p.MF',
+                          'd.F','d.FF','d.MF',
+                          'a.MM','p.FM',
+                          'd.M','d.MM','d.FM')
+colnames(sum.Model.7) = c('Coef.Model.7','p-value.Model.7')
+
+# Model 9
+coef.Model.9 = coef(summary(fit.Model.9))[,1] 
+pvalue.Model.9 = coef(summary(fit.Model.9))[,5]
+sum.Model.9 = cbind(coef.Model.9,pvalue.Model.9)
+rownames(sum.Model.9) = c('c.F','c.M','a.FF','a.FF2','p.MF','p.MF2',
+                          'a.MM','a.MM2','p.FM','p.FM2')
+colnames(sum.Model.9) = c('Coef.Model.9','p-value.Model.9')
+
+# Model 15
+coef.Model.15 = coef(summary(fit.Model.15))[,1] 
+pvalue.Model.15 = coef(summary(fit.Model.15))[,5]
+sum.Model.15 = cbind(coef.Model.15,pvalue.Model.15)
+rownames(sum.Model.15) = c('c.F','c.M',
+                           'a.FF','a.FF2','p.MF','p.MF2',
+                          'd.F','d.FF','d.FF2','d.MF','d.MF2',
+                          'a.MM','a.MM2','p.FM','p.FM2',
+                          'd.M','d.MM','d.MM2','d.FM','d.FM2')
+colnames(sum.Model.15) = c('Coef.Model.15','p-value.Model.15')
+
+# Model 17
+coef.Model.17 = coef(summary(fit.Model.17))[,1] 
+pvalue.Model.17 = coef(summary(fit.Model.17))[,5]
+sum.Model.17 = cbind(coef.Model.17,pvalue.Model.17)
+rownames(sum.Model.17) = c('c.F','c.M','rho.YF',
+                          'a.FF','p.MF','rho.YM','a.MM','p.FM')
+colnames(sum.Model.17) = c('Coef.Model.17','p-value.Model.17')
+
+# Model 23
+coef.Model.23 = coef(summary(fit.Model.23))[,1] 
+pvalue.Model.23 = coef(summary(fit.Model.23))[,5] 
+sum.Model.23 = cbind(coef.Model.23,pvalue.Model.23)
+rownames(sum.Model.23) = c('c.F','c.M',
+                          'rho.YF','a.FF','p.MF',
+                          'd.F','d.FF','d.MF',
+                          'rho.YM','a.MM','p.FM',
+                          'd.M','d.MM','d.FM')
+colnames(sum.Model.23) = c('Coef.Model.23','p-value.Model.23')
+
+
+# Model 25
+coef.Model.25 = coef(summary(fit.Model.25))[,1] 
+pvalue.Model.25 = coef(summary(fit.Model.25))[,5]
+sum.Model.25 = cbind(coef.Model.25,pvalue.Model.25)
+rownames(sum.Model.25) = c('c.F','c.M',
+                         'rho.YF','a.FF','a.FF2','p.MF','p.MF2',
+                          'rho.YM','a.MM','a.MM2','p.FM','p.FM2')
+colnames(sum.Model.25) = c('Coef.Model.25','p-value.Model.25')
+
+# Model 31
+coef.Model.31 = coef(summary(fit.Model.31))[,1] 
+pvalue.Model.31 = coef(summary(fit.Model.31))[,5]
+sum.Model.31 = cbind(coef.Model.31,pvalue.Model.31)
+rownames(sum.Model.31) = c('c.F','c.M',
+                          'rho.YF','a.FF','a.FF2','p.MF','p.MF2',
+                          'd.F','d.FF','d.FF2','d.MF','d.MF2',
+                          'rho.YM','a.MM','a.MM2','p.FM','p.FM2',
+                          'd.M','d.MM','d.MM2','d.FM','d.FM2')
+colnames(sum.Model.31) = c('Coef.Model.31','p-value.Model.31')
+
+# Create table with effects
+Table.APIM = matrix(NA,ncol=16,nrow=nrow(sum.Model.31))
+rownames(Table.APIM) = c('c.F','c.M',
+                          'rho.YF','a.FF','a.FF2','p.MF','p.MF2',
+                          'd.F','d.FF','d.FF2','d.MF','d.MF2',
+                          'rho.YM','a.MM','a.MM2','p.FM','p.FM2',
+                          'd.M','d.MM','d.MM2','d.FM','d.FM2')
+colnames(Table.APIM) = c('Coef.1','p-value.1',
+                          'Coef.7','p-value.7',
+                          'Coef.9','p-value.9',
+                          'Coef.15','p-value.15',
+                          'Coef.17','p-value.17',
+                          'Coef.23','p-value.23',
+                          'Coef.25','p-value.25',
+                          'Coef.31','p-value.31')
+
+Table.APIM[c('c.F','c.M','a.FF','p.MF','a.MM','p.FM'),1:2] = sum.Model.1
+Table.APIM[c('c.F','c.M','a.FF','p.MF',
+            'd.F','d.FF','d.MF',
+            'a.MM','p.FM',
+            'd.M','d.MM','d.FM'),3:4] = sum.Model.7
+Table.APIM[c('c.F','c.M','a.FF','a.FF2','p.MF','p.MF2',
+            'a.MM','a.MM2','p.FM','p.FM2'),5:6] = sum.Model.9
+Table.APIM[c('c.F','c.M',
+           'a.FF','a.FF2','p.MF','p.MF2',
+           'd.F','d.FF','d.FF2','d.MF','d.MF2',
+           'a.MM','a.MM2','p.FM','p.FM2',
+           'd.M','d.MM','d.MM2','d.FM','d.FM2'),7:8] = sum.Model.15
+Table.APIM[c('c.F','c.M','rho.YF',
+            'a.FF','p.MF','rho.YM','a.MM','p.FM'),9:10] = sum.Model.17
+Table.APIM[c('c.F','c.M',
+            'rho.YF','a.FF','p.MF',
+            'd.F','d.FF','d.MF',
+            'rho.YM','a.MM','p.FM',
+            'd.M','d.MM','d.FM'),11:12] = sum.Model.23
+Table.APIM[c('c.F','c.M','rho.YF','a.FF','a.FF2','p.MF','p.MF2',
+           'rho.YM','a.MM','a.MM2','p.FM','p.FM2'),13:14] = sum.Model.25
+Table.APIM[c('c.F','c.M',
+            'rho.YF','a.FF','a.FF2','p.MF','p.MF2',
+            'd.F','d.FF','d.FF2','d.MF','d.MF2',
+            'rho.YM','a.MM','a.MM2','p.FM','p.FM2',
+            'd.M','d.MM','d.MM2','d.FM','d.FM2'),15:16] = sum.Model.31
+
+kbl(round(Table.APIM,digits = 3))%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+### Variance components
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Model 1
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.1)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.1$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.1$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu.F = as.numeric(Sigma.hat['Female',2])
+sigma.nu.M = as.numeric(Sigma.hat['Male',2])
+rho.nu.F.M = as.numeric(Sigma.hat['Male',3])
+
+sum.Model.var.1 = c(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu.F,sigma.nu.M,rho.nu.F.M)
+names(sum.Model.var.1) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu.F','sigma.nu.M','rho.nu.FM')
+
+# Model 7
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.7)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.7$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.7$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu.F = as.numeric(Sigma.hat['Female',2])
+sigma.nu.M = as.numeric(Sigma.hat['Male',2])
+rho.nu.F.M = as.numeric(Sigma.hat['Male',3])
+
+sum.Model.var.7 = c(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu.F,sigma.nu.M,rho.nu.F.M)
+names(sum.Model.var.7) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu.F','sigma.nu.M','rho.nu.FM')
+
+# Model 9
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.9)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.9$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.9$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu.F = as.numeric(Sigma.hat['Female',2])
+sigma.nu.M = as.numeric(Sigma.hat['Male',2])
+rho.nu.F.M = as.numeric(Sigma.hat['Male',3])
+
+sum.Model.var.9 = c(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu.F,sigma.nu.M,rho.nu.F.M)
+names(sum.Model.var.9) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu.F','sigma.nu.M','rho.nu.FM')
+
+# Model 15
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.15)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.15$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.15$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu.F = as.numeric(Sigma.hat['Female',2])
+sigma.nu.M = as.numeric(Sigma.hat['Male',2])
+rho.nu.F.M = as.numeric(Sigma.hat['Male',3])
+
+sum.Model.var.15 = c(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu.F,sigma.nu.M,rho.nu.F.M)
+names(sum.Model.var.15) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu.F','sigma.nu.M','rho.nu.FM')
+
+# Model 17
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.17)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.17$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.17$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu.F = as.numeric(Sigma.hat['Female',2])
+sigma.nu.M = as.numeric(Sigma.hat['Male',2])
+rho.nu.F.M = as.numeric(Sigma.hat['Male',3])
+
+sum.Model.var.17 = c(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu.F,sigma.nu.M,rho.nu.F.M)
+names(sum.Model.var.17) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu.F','sigma.nu.M','rho.nu.FM')
+
+# Model 23
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.23)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.23$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.23$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu.F = as.numeric(Sigma.hat['Female',2])
+sigma.nu.M = as.numeric(Sigma.hat['Male',2])
+rho.nu.F.M = as.numeric(Sigma.hat['Male',3])
+
+sum.Model.var.23 = c(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu.F,sigma.nu.M,rho.nu.F.M)
+names(sum.Model.23) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu.F','sigma.nu.M','rho.nu.FM')
+
+# Model 25
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.25)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.25$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.25$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu.F = as.numeric(Sigma.hat['Female',2])
+sigma.nu.M = as.numeric(Sigma.hat['Male',2])
+rho.nu.F.M = as.numeric(Sigma.hat['Male',3])
+
+sum.Model.var.25 = cbind(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu.F,sigma.nu.M,rho.nu.F.M)
+names(sum.Model.var.25) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu.F','sigma.nu.M','rho.nu.FM')
+
+# Model 31
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.31)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.31$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.31$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu.F = as.numeric(Sigma.hat['Female',2])
+sigma.nu.M = as.numeric(Sigma.hat['Male',2])
+rho.nu.F.M = as.numeric(Sigma.hat['Male',3])
+
+sum.Model.var.31 = cbind(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu.F,sigma.nu.M,rho.nu.F.M)
+names(sum.Model.var.31) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu.F','sigma.nu.M','rho.nu.FM')
+
+# Create table with effects
+Table.APIM.var = matrix(NA,ncol=8,nrow=length(sum.Model.var.31))
+rownames(Table.APIM.var) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM',
+                         'sigma.nu.F','sigma.nu.M','rho.nu.FM')
+colnames(Table.APIM.var) = c('Coef.var.1','Coef.var.7',
+                          'Coef.var.9','Coef.var.15',
+                          'Coef.var.17','Coef.var.23',
+                          'Coef.var.25','Coef.var.31')
+
+Table.APIM.var[,1] = sum.Model.var.1
+Table.APIM.var[,2] = sum.Model.var.7
+Table.APIM.var[,3] = sum.Model.var.9
+Table.APIM.var[,4] = sum.Model.var.15
+Table.APIM.var[,5] = sum.Model.var.17
+Table.APIM.var[,6] = sum.Model.var.23
+Table.APIM.var[,7] = sum.Model.var.25
+Table.APIM.var[,8] = sum.Model.var.31
+
+kbl(round(Table.APIM.var,digits = 3))%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+
+## Models for indistinguishable dyads
+
+### Fixed Effects
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Model 12
+coef.Model.2 = coef(summary(fit.Model.2))[,1] 
+pvalue.Model.2 = coef(summary(fit.Model.2))[,5] 
+sum.Model.2 = cbind(coef.Model.2,pvalue.Model.2)
+rownames(sum.Model.2) = c('c','a','p')
+colnames(sum.Model.2) = c('Coef.Model.2','p-value.Model.2')
+
+# Model 8
+coef.Model.8 = coef(summary(fit.Model.8))[,1] 
+pvalue.Model.8 = coef(summary(fit.Model.8))[,5]
+sum.Model.8 = cbind(coef.Model.8,pvalue.Model.8)
+rownames(sum.Model.8) = c('c','a','p',
+                          'd','d.a','d.p')
+colnames(sum.Model.8) = c('Coef.Model.8','p-value.Model.8')
+
+# Model 10
+coef.Model.10 = coef(summary(fit.Model.10))[,1] 
+pvalue.Model.10 = coef(summary(fit.Model.10))[,5]
+sum.Model.10 = cbind(coef.Model.10,pvalue.Model.10)
+rownames(sum.Model.10) = c('c','a','a.2','p','p.2')
+colnames(sum.Model.10) = c('Coef.Model.10','p-value.Model.10')
+
+# Model 16
+coef.Model.16 = coef(summary(fit.Model.16))[,1] 
+pvalue.Model.16 = coef(summary(fit.Model.16))[,5]
+sum.Model.16 = cbind(coef.Model.16,pvalue.Model.16)
+rownames(sum.Model.16) = c('c','a','a.2','p','p.2',
+                          'd','d.a','d.a2','d.p','d.p2')
+colnames(sum.Model.16) = c('Coef.Model.16','p-value.Model.16')
+
+# Model 18
+coef.Model.18 = coef(summary(fit.Model.18))[,1] 
+pvalue.Model.18 = coef(summary(fit.Model.18))[,5]
+sum.Model.18 = cbind(coef.Model.18,pvalue.Model.18)
+rownames(sum.Model.18) = c('c','rho.Y','a','p')
+colnames(sum.Model.18) = c('Coef.Model.18','p-value.Model.18')
+
+# Model 24
+coef.Model.24 = coef(summary(fit.Model.24))[,1] 
+pvalue.Model.24 = coef(summary(fit.Model.24))[,5] 
+sum.Model.24 = cbind(coef.Model.24,pvalue.Model.24)
+rownames(sum.Model.24) = c('c','rho.Y','a','p',
+                          'd','d.a','d.p')
+colnames(sum.Model.24) = c('Coef.Model.24','p-value.Model.24')
+
+
+# Model 26
+coef.Model.26 = coef(summary(fit.Model.26))[,1] 
+pvalue.Model.26 = coef(summary(fit.Model.26))[,5]
+sum.Model.26 = cbind(coef.Model.26,pvalue.Model.26)
+rownames(sum.Model.26) = c('c','rho.Y','a','a.2','p','p.2')
+colnames(sum.Model.26) = c('Coef.Model.26','p-value.Model.26')
+
+# Model 32
+coef.Model.32 = coef(summary(fit.Model.32))[,1] 
+pvalue.Model.32 = coef(summary(fit.Model.32))[,5]
+sum.Model.32 = cbind(coef.Model.32,pvalue.Model.32)
+rownames(sum.Model.32) = c('c','rho.Y','a','a.2','p','p.2',
+                          'd','d.a','d.a2','d.p','d.p2')
+colnames(sum.Model.32) = c('Coef.Model.32','p-value.Model.32')
+
+# Create table with effects
+Table.APIM.INDST = matrix(NA,ncol=16,nrow=nrow(sum.Model.32))
+rownames(Table.APIM.INDST) = c('c','rho.Y','a','a.2','p','p.2',
+                          'd','d.a','d.a2','d.p','d.p2')
+colnames(Table.APIM.INDST) = c('Coef.2','p-value.2',
+                          'Coef.8','p-value.8',
+                          'Coef.10','p-value.10',
+                          'Coef.16','p-value.16',
+                          'Coef.18','p-value.18',
+                          'Coef.24','p-value.24',
+                          'Coef.26','p-value.26',
+                          'Coef.32','p-value.32')
+
+Table.APIM.INDST[c('c','a','p'),1:2] = sum.Model.2
+Table.APIM.INDST[c('c','a','p',
+            'd','d.a','d.p'),3:4] = sum.Model.8
+Table.APIM.INDST[c('c','a','a.2','p','p.2'),5:6] = sum.Model.10
+Table.APIM.INDST[c('c','a','a.2','p','p.2',
+           'd','d.a','d.a2','d.p','d.p2'),7:8] = sum.Model.16
+Table.APIM.INDST[c('c','rho.Y','a','p'),9:10] = sum.Model.18
+Table.APIM.INDST[c('c','rho.Y','a','p',
+            'd','d.a','d.p'),11:12] = sum.Model.24
+Table.APIM.INDST[c('c','rho.Y','a','a.2','p','p.2'),13:14] = sum.Model.26
+Table.APIM.INDST[c('c','rho.Y','a','a.2','p','p.2',
+            'd','d.a','d.a2','d.p','d.p2'),15:16] = sum.Model.32
+
+kbl(round(Table.APIM.INDST,digits = 3))%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+### Variance components
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Model 2
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.2)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.2$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.2$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu = as.numeric(Sigma.hat['GenderF',2])
+
+sum.Model.var.2 = c(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu)
+names(sum.Model.var.2) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu')
+
+# Model 8
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.8)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.8$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.8$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu = as.numeric(Sigma.hat['GenderF',2])
+
+sum.Model.var.8 = c(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu)
+names(sum.Model.var.8) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu')
+
+# Model 10
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.10)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.10$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.10$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu = as.numeric(Sigma.hat['GenderF',2])
+
+sum.Model.var.10 = cbind(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu)
+names(sum.Model.var.10) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu')
+
+# Model 16
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.16)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.16$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.16$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu = as.numeric(Sigma.hat['GenderF',2])
+
+sum.Model.var.16 = cbind(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu)
+names(sum.Model.var.16) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu')
+
+# Model 18
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.18)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.18$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.18$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu = as.numeric(Sigma.hat['GenderF',2])
+
+sum.Model.var.18 = cbind(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu)
+names(sum.Model.var.18) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu')
+
+# Model 24
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.24)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.24$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.24$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu = as.numeric(Sigma.hat['GenderF',2])
+
+sum.Model.var.24 = cbind(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu)
+names(sum.Model.var.24) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu')
+
+# Model 26
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.26)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.26$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.26$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu = as.numeric(Sigma.hat['GenderF',2])
+
+sum.Model.var.26 = cbind(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu)
+names(sum.Model.var.26) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu')
+
+# Model 32
+# Level 1 variance components
+Sigma.hat = VarCorr(fit.Model.32)
+Sigma.weight.hat = 1/unique(varWeights(fit.Model.32$modelStruct$varStruct))
+sigma.eps.F = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[1]
+sigma.eps.M = as.numeric(Sigma.hat['Residual',2])*Sigma.weight.hat[2]
+rho.eps.FM = as.numeric(coef(fit.Model.32$modelStruct$corStruct,unconstrained=FALSE)) 
+
+# Level 2 variance components
+sigma.nu = as.numeric(Sigma.hat['GenderF',2])
+
+sum.Model.var.32 = cbind(sigma.eps.F,sigma.eps.M,rho.eps.FM,sigma.nu)
+names(sum.Model.var.32) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM','sigma.nu')
+
+# Create table with effects
+Table.APIM.var = matrix(NA,ncol=8,nrow=length(sum.Model.var.32))
+rownames(Table.APIM.var) = c('sigma.eps.F','sigma.eps.M','rho.eps.FM',
+                         'sigma.nu')
+colnames(Table.APIM.var) = c('Coef.var.2','Coef.var.8',
+                          'Coef.var.10','Coef.var.16',
+                          'Coef.var.18','Coef.var.24',
+                          'Coef.var.26','Coef.var.32')
+
+Table.APIM.var[,1] = sum.Model.var.2
+Table.APIM.var[,2] = sum.Model.var.8
+Table.APIM.var[,3] = sum.Model.var.10
+Table.APIM.var[,4] = sum.Model.var.16
+Table.APIM.var[,5] = sum.Model.var.18
+Table.APIM.var[,6] = sum.Model.var.24
+Table.APIM.var[,7] = sum.Model.var.26
+Table.APIM.var[,8] = sum.Model.var.32
+
+kbl(round(Table.APIM.var,digits = 3))%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+

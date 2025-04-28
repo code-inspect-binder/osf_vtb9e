@@ -1,0 +1,507 @@
+---
+title: "Sensitivity Power Analysis"
+authors: "Ginette Lafit (ginette.lafit@kuleuven.be)"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preliminaries
+
+### Prelim - Installing libraries used in this script (whenever is necessary).
+
+```{r, echo=TRUE, warning=TRUE, results="hide", message=FALSE}
+# This code chunk simply makes sure that all the 
+# libraries used here are installed.
+# Check if R packages are installed
+
+list.of.packages = c("nlme","MASS","tidyverse","future.apply","gridExtra","formattable",
+"htmltools","shiny","DT","ggplot2","gridExtra","data.table","plyr","dplyr",
+"tidyr","shinyjs","reshape")
+new.packages = list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+# Delete # if the package PowerLAPIM is not installed yet
+#library(devtools)
+#devtools::install_github("ginettelafit/PowerLAPIM", force = T)
+```
+
+### Prelim - Loading libraries used in this script.
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Load packages
+library(nlme)
+library(MASS)
+library(tidyverse)
+library(future.apply)
+library(gridExtra)
+library(formattable)
+library(htmltools)
+library(shiny)
+library(DT)
+library(ggplot2)
+library(gridExtra)
+library(data.table)
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(shinyjs)
+library(PowerLAPIM)
+library(reshape)
+```
+
+# Set parameter values of Model 9
+
+To compute power for each of test the hypothesis of the quadratic effect of the partners’ own enacted responsiveness on their happiness for women. We select the corresponding population model. Using the function Sim.model.Dyad.IL included in the R package of the PowerLAPIM app, we set Model 9: L-APIM with quadratic effects to test the second hypothesis. Next, we indicate the sample sizes considered in the power computations. We indicate the following values for the number of dyads: 20, 40, 60, 100, 160, and the expected number of completed equidistant observations per dyad. In our case, this number equals 70 measurement occasions. Then, we fill in the plausible values of the model parameters, as well as the mean, standard deviation, and correlation of the partners’ predictors assuming that they are bivariate normally distributed (see Figure 4 and 5). Subsequently, we indicate that the predictors should be person-mean centered in the power analysis Finally, we set the estimation method (i.e., Restricted Maximum Likelihood estimation), the desired significance level (i.e., α=0.05), and the number of Monte Carlo replicates in the power simulations (here 1,000).
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# We set the parameter values of Model 9
+Model = 9 # set population model 
+N.dyad = c("20","40","60","100","160") # vectors including the number of dyads
+N0.dyad = NULL
+N1.dyad = NULL
+T.obs = 70 # set number of measurement occassions  
+c.F = 61.505 # intercept of partner A (Female)
+c.M = 62.439 # intercept of partner B (Male)
+a.FF = 0.457 # Actor effect of partner A
+p.MF = 0.066 # Partner effect of partner A
+a.FF2 = 0.004 # Quadratic actor effect of partner A
+p.MF2 = 0.000 # Quadratic partner effect of partner A
+a.MM = 0.365 # Actor effect of partner B
+p.FM = 0.076 # Partner effect of partner B
+a.MM2 = 0.003 # Quadratic actor effect of partner B
+p.FM2 = 0.000 # Quadratic partner effect of partner B
+c = NULL
+a = NULL
+a.2 = NULL
+p = NULL
+p.2 = NULL                             
+c.F0 = NULL
+c.F1 = NULL
+c.M0 = NULL
+c.M1 = NULL
+a.FF0 = NULL
+a.FF1 = NULL
+a.FF02 = NULL
+a.FF12 = NULL
+p.MF0 = NULL
+p.MF1 = NULL
+p.MF02 = NULL
+p.MF12 = NULL
+a.MM0 = NULL
+a.MM1 = NULL
+a.MM02 = NULL
+a.MM12 = NULL
+p.FM0 = NULL
+p.FM1 = NULL
+p.FM02 = NULL
+p.FM12 = NULL
+c0 = NULL
+c1 = NULL
+a0 = NULL
+a1 = NULL
+a02 = NULL
+a12 = NULL
+p0 = NULL
+p1 = NULL
+p02 = NULL
+p12 = NULL
+b.F = NULL
+b.M = NULL
+b.FF = NULL
+b.MF = NULL
+b.MM = NULL
+b.FM = NULL
+b.FF2 = NULL
+b.MF2 = NULL
+b.MM2 = NULL
+b.FM2 = NULL
+d.F = NULL
+d.M = NULL
+d.FF = NULL
+d.MF = NULL
+d.MM = NULL
+d.FM = NULL
+d.FF2 = NULL
+d.MF2 = NULL
+d.MM2 = NULL
+d.FM2 = NULL
+b = NULL
+b.a = NULL
+b.a2 = NULL
+b.p = NULL
+b.p2 = NULL
+d = NULL
+d.a = NULL
+d.a2 = NULL
+d.p = NULL
+d.p2 = NULL
+rho.YF = NULL
+rho.YM = NULL
+rho.Y = NULL
+rho.YF0 = NULL
+rho.YF1 = NULL
+rho.YM0 = NULL
+rho.YM1 = NULL
+sigma.eps.F = 17.822 # Standard deviation of the Level 1 errors of partner A
+sigma.eps.M = 17.055 # Standard deviation of the Level 1 errors of partner B
+rho.eps.FM = 0.229 # Correlation between the Level 1 errors of partners A and B
+sigma.nu.F = 12.356 # Standard deviation of the random intercept of partner A
+sigma.nu.M = 12.053 # Standard deviation of the random intercept of partner B
+rho.nu.F.M = 0.362 # Correlation between the random intercepts of partner A and B
+sigma.nu = NULL
+mu.XF = 74.399 # Mean of the predictor enacted responsiveness of partner A
+sigma.XF = 20.564 # Standard deviation of the predictor enacted responsiveness of partner A
+mu.XM = 74.623 # Mean of the predictor enacted responsiveness of partner B
+sigma.XM = 20.302 # Standard deviation of the predictor enacted responsiveness of partner B
+rho.X = 0.025 # Correlation between the predictor enacted responsiveness of partner A and B
+mu.XF0 = NULL
+mu.XF1 = NULL
+sigma.XF0 = NULL
+sigma.XF1 = NULL
+mu.XM0 = NULL
+mu.XM1 = NULL
+sigma.XM0 = NULL
+sigma.XM1 = NULL
+rho.X0 = NULL
+rho.X1 = NULL
+mu.W = NULL
+sigma.W = NULL
+prob.D = NULL
+is.center.X = TRUE # Person-mean centered the Level 1 predictors (enacted responsiveness)
+is.center.W = NULL
+R = 1000 # Number of Monte Carlo replicates
+alpha = 0.05 # Type I error
+is.REML = TRUE # Set the estimation method: Restricted Maximum Likelihood estimation
+
+```
+
+# Sensitivity power analysis for the effect of interest
+
+First, we study how power fluctuates as a function of the size of the main effect of interest (i.e., women’s quadratic actor effect), where we consider the following alternatives: 0.0001, 0.0005, 0.001, 0.002, 0.003, 0.004, 0.005.
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Set the values for the quadratic actor effects for conducting the sensitivity analysis
+a.FF2 = c(0.0001,0.0005,0.001,0.002,0.003,0.004,0.005) 
+
+# Conduct sensitive analysis to compute power for L-APIM
+Fit.Model = list()
+for (i in 1:length(a.FF2)){
+Fit.Model[[i]] = Sim.model.Dyad.IL(Model,N.dyad,N0.dyad,N1.dyad,T.obs,  
+c.F,c.M,a.FF,p.MF,a.FF2[i],p.MF2,a.MM,p.FM,a.MM2,p.FM2,
+c,a,a.2,p,p.2,
+c.F0,c.F1,c.M0,c.M1,a.FF0,a.FF1,a.FF02,a.FF12,p.MF0,p.MF1,p.MF02,p.MF12,
+a.MM0,a.MM1,a.MM02,a.MM12,p.FM0,p.FM1,p.FM02,p.FM12,
+c0,c1,a0,a1,a02,a12,p0,p1,p02,p12,
+b.F,b.M,b.FF,b.MF,b.MM,b.FM,b.FF2,b.MF2,b.MM2,b.FM2,
+d.F,d.M,d.FF,d.MF,d.MM,d.FM,d.FF2,d.MF2,d.MM2,d.FM2,
+b,b.a,b.a2,b.p,b.p2,
+d,d.a,d.a2,d.p,d.p2,
+rho.YF,rho.YM,rho.Y,rho.YF0,rho.YF1,rho.YM0,rho.YM1,
+sigma.eps.F,sigma.eps.M,rho.eps.FM,
+sigma.nu.F,sigma.nu.M,rho.nu.F.M,sigma.nu,
+mu.XF,sigma.XF,mu.XM,sigma.XM,rho.X,
+mu.XF0,mu.XF1,sigma.XF0,sigma.XF1,mu.XM0,mu.XM1,sigma.XM0,sigma.XM1,rho.X0,rho.X1,
+mu.W,sigma.W,prob.D,
+is.center.X,is.center.W,R,alpha,is.REML)
+}
+
+save(Fit.Model,file="Sensitivity_Power_Analysis_aFF2.RData")
+
+```
+
+## Plot power curve for the sensitivity analysis
+
+Next, we plot the power curves for the sensitivity analysis of the value of the fixed quadratic actor effect of the woman partner on the power for estimating the women fixed quadratic actor effects using the L-APIM with quadratics effects.
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Load data set with the results of the sensitivity power analysis
+load(file="Sensitivity_Power_Analysis_aFF2.RData")
+
+# Get numeric vector N.dyad = c("20","40","60","100","160")
+N.dyad = c(20,40,60,100,160)
+
+# Construct a matrix with the results of the sensitivity power analysis
+# Get the values of power
+Power.a.FF2.power = matrix(0,length(N.dyad),length(a.FF2))
+for (i in 1:length(a.FF2)){
+Power.a.FF2.power[,i] = c(Fit.Model[[i]]$power.curve[,'a.FF2'])  
+}
+# Long format
+Power.a.FF2.power = melt(Power.a.FF2.power, id.vars = "Power")
+colnames(Power.a.FF2.power) = c('N.dyad','Value','Power')
+Power.a.FF2.power$N.dyad = rep(N.dyad,length(a.FF2))
+Power.a.FF2.power$Value = rep(a.FF2,each=length(N.dyad))
+
+# Get the values of the standard error of power
+Power.a.FF2.power.se = matrix(0,length(N.dyad),length(a.FF2))
+for (i in 1:length(a.FF2)){
+Power.a.FF2.power.se[,i] = c(Fit.Model[[i]]$power.curve[,'a.FF2.se'])  
+}
+# Long format
+Power.a.FF2.power.se <- melt(Power.a.FF2.power.se, id.vars = "se")
+colnames(Power.a.FF2.power.se) = c('N.dyad','Value','se')
+
+# Get a matrix with the results of power and the standard error
+Power.a.FF2.sensitivity = cbind(Power.a.FF2.power$N.dyad,Power.a.FF2.power$Value,Power.a.FF2.power$Power,Power.a.FF2.power.se$se)
+colnames(Power.a.FF2.sensitivity) = c('N dyad','Value','Power','se')
+
+
+# Create curve with the results of the sensitivity power analysis
+data.power.a.FF2 = data.frame(Power.a.FF2.sensitivity)
+
+ggplot(data.power.a.FF2, aes(x = N.dyad, y = Power, colour = as.factor(Value), group = as.factor(Value))) + geom_line(size=1) + geom_point(size = 1) + 
+geom_errorbar(aes(ymin=Power-se, ymax=Power+se), width=.4,position=position_dodge(.9)) +
+labs(title = "Power curves for the quadratic fixed actor effect for partner A", x = "Number of dyads",color='Quadratic actor effect for partner A') + scale_x_discrete(limits=data.power.a.FF2$N.dyad) +  scale_colour_manual(values=c("#CC79A7", "#56B4E9", "#009E73","#F0E442", "#0072B2", "#000000", "#D55E00")) + geom_hline(yintercept = 0.9,linetype = "dashed") + theme(legend.position="bottom", legend.title = element_text(size=10))
+
+```
+
+# Sensitivity power analysis for a secondary parameter: standard deviation of enacted responsiveness of partner A
+
+Next, we investigate how power varies as a function of two additional model parameters while fixing the value of the main effect of interest to 0.004. We compute the power curves when varying the standard deviation of the women’s predictor values (i.e., enacted responsiveness). Since the initial estimate equals 20.564, we set the value of the standard deviation of the predictor of partner A by reducing the value to 90%, 80%, 50%, 20% of the original value and increasing the value by 50%. 
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Set the values for the correlation between the predictors of the dyadic partner for conducting the sensitivity analysis
+N.dyad = c("20","40","60","100","160")
+a.FF2 = 0.004 
+sigma.XF = 20.564*c(0.10,0.2,0.5,0.8,1,1.5)
+
+# Conduct sensitive analysis
+Fit.Model.sigma.XF = list()
+for (i in 1:length(sigma.XF)){
+Fit.Model.sigma.XF[[i]] = Sim.model.Dyad.IL(Model,N.dyad,N0.dyad,N1.dyad,T.obs,  
+c.F,c.M,a.FF,p.MF,a.FF2,p.MF2,a.MM,p.FM,a.MM2,p.FM2,
+c,a,a.2,p,p.2,
+c.F0,c.F1,c.M0,c.M1,a.FF0,a.FF1,a.FF02,a.FF12,p.MF0,p.MF1,p.MF02,p.MF12,
+a.MM0,a.MM1,a.MM02,a.MM12,p.FM0,p.FM1,p.FM02,p.FM12,
+c0,c1,a0,a1,a02,a12,p0,p1,p02,p12,
+b.F,b.M,b.FF,b.MF,b.MM,b.FM,b.FF2,b.MF2,b.MM2,b.FM2,
+d.F,d.M,d.FF,d.MF,d.MM,d.FM,d.FF2,d.MF2,d.MM2,d.FM2,
+b,b.a,b.a2,b.p,b.p2,
+d,d.a,d.a2,d.p,d.p2,
+rho.YF,rho.YM,rho.Y,rho.YF0,rho.YF1,rho.YM0,rho.YM1,
+sigma.eps.F,sigma.eps.M,rho.eps.FM,
+sigma.nu.F,sigma.nu.M,rho.nu.F.M,sigma.nu,
+mu.XF,sigma.XF[i],mu.XM,sigma.XM,rho.X,
+mu.XF0,mu.XF1,sigma.XF0,sigma.XF1,mu.XM0,mu.XM1,sigma.XM0,sigma.XM1,rho.X0,rho.X1,
+mu.W,sigma.W,prob.D,
+is.center.X,is.center.W,R,alpha,is.REML)
+}
+
+save(Fit.Model.sigma.XF,file="Sensitivity_Power_Analysis_sigma.XF.RData")
+
+```
+
+## Plot power curve for the sensitivity analysis
+
+We plot the power curves for the sensitivity analysis of the value of the standard deviation of the enacted response of the woman partner on the power for estimating the women fixed quadratic actor effects using the L-APIM with quadratics effects.
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Load data set with the results of the sensitivity power analysis
+load(file="Sensitivity_Power_Analysis_sigma.XF.RData")
+
+# Get numeric vector N.dyad = c("20","40","60","100","160")
+N.dyad = c(20,40,60,100,160)
+
+# Construct a matrix with the results of the sensitivity power analysis
+# Get the values of power
+Power.a.FF2.power.sigma.XF = matrix(0,length(N.dyad),length(sigma.XF))
+for (i in 1:length(sigma.XF)){
+Power.a.FF2.power.sigma.XF[,i] = c(Fit.Model.sigma.XF[[i]]$power.curve[,'a.FF2'])  
+}
+# Long format
+Power.a.FF2.power.sigma.XF = melt(Power.a.FF2.power.sigma.XF, id.vars = "Power")
+colnames(Power.a.FF2.power.sigma.XF) = c('N.dyad','Value','Power')
+Power.a.FF2.power.sigma.XF$N.dyad = rep(N.dyad,length(a.FF2))
+Power.a.FF2.power.sigma.XF$Value = rep(sigma.XF,each=length(N.dyad))
+
+# Get the values of the standard error of power
+Power.a.FF2.power.se.sigma.XF = matrix(0,length(N.dyad),length(sigma.XF))
+for (i in 1:length(sigma.XF)){
+Power.a.FF2.power.se.sigma.XF[,i] = c(Fit.Model.sigma.XF[[i]]$power.curve[,'a.FF2.se'])  
+}
+# Long format
+Power.a.FF2.power.se.sigma.XF = melt(Power.a.FF2.power.se.sigma.XF, id.vars = "se")
+colnames(Power.a.FF2.power.se.sigma.XF) = c('N.dyad','Value','se')
+
+# Get a matrix with the results of power and the standard error
+Power.a.FF2.sensitivity.sigma.XF = cbind(Power.a.FF2.power.sigma.XF$N.dyad,Power.a.FF2.power.sigma.XF$Value,Power.a.FF2.power.sigma.XF$Power,Power.a.FF2.power.se.sigma.XF$se)
+colnames(Power.a.FF2.sensitivity.sigma.XF) = c('N dyad','Value','Power','se')
+
+
+# Create curve with the results of the sensitivity power analysis
+data.power.a.FF2.sigma.XF = data.frame(Power.a.FF2.sensitivity.sigma.XF)
+
+ggplot(data.power.a.FF2.sigma.XF, aes(x = N.dyad, y = Power, colour = as.factor(Value), group = as.factor(Value))) + geom_line(size=1) + geom_point(size = 1) + 
+geom_errorbar(aes(ymin=Power-se, ymax=Power+se), width=.4,position=position_dodge(.9)) +
+labs(title = "Power curves for the quadratic fixed actor effect for partner A", x = "Number of dyads",color='Standard deviation of the predictor of partner A') + scale_x_discrete(limits=data.power.a.FF2.sigma.XF$N.dyad) +  scale_colour_manual(values=c("#CC79A7", "#56B4E9","#009E73","#D55E00","#000000","#0072B2")) + geom_hline(yintercept = 0.9,linetype = "dashed") + theme(legend.position="bottom", legend.title = element_text(size=10))
+
+```
+
+# Sensitivity power analysis for a secondary parameter: correlation between enacted responsiveness of partners A and B
+
+We investigate how power varies as a function of the correlation between enacted responsiveness of partners A and B while fixing the value of the main effect of interest to 0.004.  
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Set the values for the correlation between the predictors of the dyadic partner for conducting the sensitivity analysis
+N.dyad = c("20","40","60","100","160")
+a.FF2 = 0.004 
+rho.X = c(-0.8,-0.4,-0.2,0,0.025,0.2,0.4,0.8)
+
+# Conduct sensitive analysis
+Fit.Model.rho.X = list()
+for (i in 7:length(rho.X)){
+Fit.Model.rho.X[[i]] = Sim.model.Dyad.IL(Model,N.dyad,N0.dyad,N1.dyad,T.obs,  
+c.F,c.M,a.FF,p.MF,a.FF2,p.MF2,a.MM,p.FM,a.MM2,p.FM2,
+c,a,a.2,p,p.2,
+c.F0,c.F1,c.M0,c.M1,a.FF0,a.FF1,a.FF02,a.FF12,p.MF0,p.MF1,p.MF02,p.MF12,
+a.MM0,a.MM1,a.MM02,a.MM12,p.FM0,p.FM1,p.FM02,p.FM12,
+c0,c1,a0,a1,a02,a12,p0,p1,p02,p12,
+b.F,b.M,b.FF,b.MF,b.MM,b.FM,b.FF2,b.MF2,b.MM2,b.FM2,
+d.F,d.M,d.FF,d.MF,d.MM,d.FM,d.FF2,d.MF2,d.MM2,d.FM2,
+b,b.a,b.a2,b.p,b.p2,
+d,d.a,d.a2,d.p,d.p2,
+rho.YF,rho.YM,rho.Y,rho.YF0,rho.YF1,rho.YM0,rho.YM1,
+sigma.eps.F,sigma.eps.M,rho.eps.FM,
+sigma.nu.F,sigma.nu.M,rho.nu.F.M,sigma.nu,
+mu.XF,sigma.XF,mu.XM,sigma.XM,rho.X[i],
+mu.XF0,mu.XF1,sigma.XF0,sigma.XF1,mu.XM0,mu.XM1,sigma.XM0,sigma.XM1,rho.X0,rho.X1,
+mu.W,sigma.W,prob.D,
+is.center.X,is.center.W,R,alpha,is.REML)
+}
+
+save(Fit.Model.rho.X,file="Sensitivity_Power_Analysis_rho.X.RData")
+
+```
+
+## Plot power curve for the sensitivity analysis
+
+We plot the power curves for the sensitivity analysis of the value of the correlation of the enacted response of the woman and man partner on the power for estimating the women fixed quadratic actor effects using the L-APIM with quadratics effects.
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Load data set with the results of the sensitivity power analysis
+load(file="Sensitivity_Power_Analysis_rho.X.RData")
+
+# Get numeric vector N.dyad = c("20","40","60","100","160")
+N.dyad = c(20,40,60,100,160)
+
+# Construct a matrix with the results of the sensitivity power analysis
+# Get the values of power
+Power.a.FF2.power.rho.X = matrix(0,length(N.dyad),length(rho.X))
+for (i in 1:length(rho.X)){
+Power.a.FF2.power.rho.X[,i] = c(Fit.Model.rho.X[[i]]$power.curve[,'a.FF2'])  
+}
+# Long format
+Power.a.FF2.power.rho.X = melt(Power.a.FF2.power.rho.X, id.vars = "Power")
+colnames(Power.a.FF2.power.rho.X) = c('N.dyad','Value','Power')
+Power.a.FF2.power.rho.X$N.dyad = rep(N.dyad,length(a.FF2))
+Power.a.FF2.power.rho.X$Value = rep(rho.X,each=length(N.dyad))
+
+# Get the values of the standard error of power
+Power.a.FF2.power.se.rho.X = matrix(0,length(N.dyad),length(rho.X))
+for (i in 1:length(rho.X)){
+Power.a.FF2.power.se.rho.X[,i] = c(Fit.Model.rho.X[[i]]$power.curve[,'a.FF2.se'])  
+}
+# Long format
+Power.a.FF2.power.se.rho.X = melt(Power.a.FF2.power.se.rho.X, id.vars = "se")
+colnames(Power.a.FF2.power.se.rho.X) = c('N.dyad','Value','se')
+
+# Get a matrix with the results of power and the standard error
+Power.a.FF2.sensitivity.rho.X = cbind(Power.a.FF2.power.rho.X$N.dyad,Power.a.FF2.power.rho.X$Value,Power.a.FF2.power.rho.X$Power,Power.a.FF2.power.se.rho.X$se)
+colnames(Power.a.FF2.sensitivity.rho.X) = c('N dyad','Value','Power','se')
+
+
+# Create curve with the results of the sensitivity power analysis
+data.power.a.FF2.rho.X = data.frame(Power.a.FF2.sensitivity.rho.X)
+
+ggplot(data.power.a.FF2.rho.X, aes(x = N.dyad, y = Power, colour = as.factor(Value), group = as.factor(Value))) + geom_line(size=1) + geom_point(size = 1) + 
+geom_errorbar(aes(ymin=Power-se, ymax=Power+se), width=.4,position=position_dodge(.9)) +
+labs(title = "Power curves for the quadratic fixed actor effect for partner A", x = "Number of dyads",color='Correlation between the predictors of partners A and B') + scale_x_discrete(limits=data.power.a.FF2.rho.X$N.dyad) +  scale_colour_manual(values=c("#CC79A7", "#56B4E9","#009E73","#000000","#0072B2","#F0E442","#E69F00","#D55E00")) + geom_hline(yintercept = 0.9,linetype = "dashed") + theme(legend.position="bottom", legend.title = element_text(size=10))
+
+```
+
+# Sensitivity power analysis: varying the number of time points
+
+Finally, we evaluate how the number of measurement occasions affects power. 
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Set the values for the correlation between the predictors of the dyadic partner for conducting the sensitivity analysis
+N.dyad = c("20","40","60","100","160")
+a.FF2 = 0.004 
+T.obs = c(20,30,50,70,100)
+
+# Conduct sensitive analysis
+Fit.Model.T.obs = list()
+for (i in 1:2){
+Fit.Model.T.obs[[i]] = Sim.model.Dyad.IL(Model,N.dyad,N0.dyad,N1.dyad,T.obs[i],  
+c.F,c.M,a.FF,p.MF,a.FF2,p.MF2,a.MM,p.FM,a.MM2,p.FM2,
+c,a,a.2,p,p.2,
+c.F0,c.F1,c.M0,c.M1,a.FF0,a.FF1,a.FF02,a.FF12,p.MF0,p.MF1,p.MF02,p.MF12,
+a.MM0,a.MM1,a.MM02,a.MM12,p.FM0,p.FM1,p.FM02,p.FM12,
+c0,c1,a0,a1,a02,a12,p0,p1,p02,p12,
+b.F,b.M,b.FF,b.MF,b.MM,b.FM,b.FF2,b.MF2,b.MM2,b.FM2,
+d.F,d.M,d.FF,d.MF,d.MM,d.FM,d.FF2,d.MF2,d.MM2,d.FM2,
+b,b.a,b.a2,b.p,b.p2,
+d,d.a,d.a2,d.p,d.p2,
+rho.YF,rho.YM,rho.Y,rho.YF0,rho.YF1,rho.YM0,rho.YM1,
+sigma.eps.F,sigma.eps.M,rho.eps.FM,
+sigma.nu.F,sigma.nu.M,rho.nu.F.M,sigma.nu,
+mu.XF,sigma.XF,mu.XM,sigma.XM,rho.X,
+mu.XF0,mu.XF1,sigma.XF0,sigma.XF1,mu.XM0,mu.XM1,sigma.XM0,sigma.XM1,rho.X0,rho.X1,
+mu.W,sigma.W,prob.D,
+is.center.X,is.center.W,R,alpha,is.REML)
+}
+
+save(Fit.Model.T.obs,file="Sensitivity_Power_Analysis_T.obs.RData")
+
+```
+
+## Plot power curve for the sensitivity analysis
+
+We plot the power curves for the sensitivity analysis of the number of time points on the power for estimating the women fixed quadratic actor effects using the L-APIM with quadratics effects.
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Load data set with the results of the sensitivity power analysis
+load(file="Sensitivity_Power_Analysis_T.obs.RData")
+
+# Get numeric vector N.dyad = c("20","40","60","100","160")
+N.dyad = c(20,40,60,100,160)
+
+# Construct a matrix with the results of the sensitivity power analysis
+# Get the values of power
+Power.a.FF2.power.T.obs = matrix(0,length(N.dyad),length(T.obs))
+for (i in 1:length(T.obs)){
+Power.a.FF2.power.T.obs[,i] = c(Fit.Model.T.obs[[i]]$power.curve[,'a.FF2'])  
+}
+# Long format
+Power.a.FF2.power.T.obs = melt(Power.a.FF2.power.T.obs, id.vars = "Power")
+colnames(Power.a.FF2.power.T.obs) = c('N.dyad','Value','Power')
+Power.a.FF2.power.T.obs$N.dyad = rep(N.dyad,length(a.FF2))
+Power.a.FF2.power.T.obs$Value = rep(T.obs,each=length(N.dyad))
+
+# Get the values of the standard error of power
+Power.a.FF2.power.se.T.obs = matrix(0,length(N.dyad),length(T.obs))
+for (i in 1:length(T.obs)){
+Power.a.FF2.power.se.T.obs[,i] = c(Fit.Model.T.obs[[i]]$power.curve[,'a.FF2.se'])  
+}
+# Long format
+Power.a.FF2.power.se.T.obs = melt(Power.a.FF2.power.se.T.obs, id.vars = "se")
+colnames(Power.a.FF2.power.se.T.obs) = c('N.dyad','Value','se')
+
+# Get a matrix with the results of power and the standard error
+Power.a.FF2.sensitivity.T.obs = cbind(Power.a.FF2.power.T.obs$N.dyad,Power.a.FF2.power.T.obs$Value,Power.a.FF2.power.T.obs$Power,Power.a.FF2.power.se.T.obs$se)
+colnames(Power.a.FF2.sensitivity.T.obs) = c('N dyad','Value','Power','se')
+
+
+# Create curve with the results of the sensitivity power analysis
+data.power.a.FF2.T.obs = data.frame(Power.a.FF2.sensitivity.T.obs)
+
+ggplot(data.power.a.FF2.T.obs, aes(x = N.dyad, y = Power, colour = as.factor(Value), group = as.factor(Value))) + geom_line(size=1) + geom_point(size = 1) + 
+geom_errorbar(aes(ymin=Power-se, ymax=Power+se), width=.4,position=position_dodge(.9)) +
+labs(title = "Power curves for the quadratic fixed actor effect for partner A", x = "Number of dyads",color='Number of measurement occasions') + scale_x_discrete(limits=data.power.a.FF2.T.obs$N.dyad) +  scale_colour_manual(values=c("#CC79A7", "#009E73","#0072B2","#000000","#D55E00")) + geom_hline(yintercept = 0.9,linetype = "dashed")  + theme(legend.position="bottom", legend.title = element_text(size=10))
+
+```
+

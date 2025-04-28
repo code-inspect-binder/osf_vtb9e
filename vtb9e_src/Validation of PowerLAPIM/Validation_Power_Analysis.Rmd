@@ -1,0 +1,704 @@
+---
+title: "Validating Power Analysis using PowerLAPIM and SEM"
+author: 'Ginette Lafit (ginette.lafit@kuleuven.be)'
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preliminaries
+
+### Prelim - Installing libraries used in this script (whenever is necessary).
+
+```{r, echo=TRUE, warning=TRUE, results="hide", message=FALSE}
+# This code chunk simply makes sure that all the 
+# libraries used here are installed.
+# Check if R packages are installed
+
+list.of.packages = c("nlme","MASS","tidyverse","future.apply","gridExtra","formattable",
+"htmltools","shiny","DT","ggplot2","gridExtra","data.table","plyr","dplyr",
+"tidyr","shinyjs","reshape","lavaan","kableExtra")
+new.packages = list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+# Delet # if the package PowerLAPIM is not installed yet
+#library(devtools)
+#devtools::install_github("ginettelafit/PowerLAPIM", force = T)
+```
+
+### Prelim - Loading libraries used in this script.
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Load packages
+library(nlme)
+library(MASS)
+library(tidyverse)
+library(future.apply)
+library(gridExtra)
+library(formattable)
+library(htmltools)
+library(shiny)
+library(DT)
+library(ggplot2)
+library(gridExtra)
+library(data.table)
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(shinyjs)
+library(PowerLAPIM)
+library(reshape)
+library(lavaan)
+library(foreign)
+library(kableExtra)
+```
+
+
+To validate the results obtained with PowerLAPIM, we compare two modeling approaches to analyze the L-APIM with linear effects: the multilevel approach using the application and structural equation modeling (SEM).
+
+We applied Model 1: L-APIM with linear effect only to the Dyadic Interaction data to estimate actor and partner effects of partners’ enacted responsiveness on their happiness. For each participant, we select the first 10 time points, and we estimate Model 1 using SEM. We set the correlation between the partners’ enacted responsiveness to zero. We also assume that the correlation between the Level 1 errors is zero. 
+
+## Data preprocessing for SEM analysis
+
+First, we preprocessed and re-shaped the data from the Dyadic Interaction study. Because the ESM data is in the long format, we have to converte it to the wide format to estimate the L-APIM using SEM. 
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Load person period data set
+data.person = read.spss("ESM_8.sav", to.data.frame=TRUE)
+data.person = data.frame(data.person)
+
+# Select variable to use 
+data.person = data.person[,c('couple','ppnr','beepnr','DayESM','happy','enact_respons')]
+
+# Select the first 10 beeps
+data.person = data.person[data.person$beepnr<=10,]
+
+# create variable Gender
+data.person$Gender = ifelse(data.person$ppnr == data.person$couple,'F','M')
+
+# Select data for the Female partner
+data.person.F = data.person[data.person$Gender=='F',]
+data.person.F = data.person.F[,c('couple','ppnr','beepnr','happy','enact_respons')]
+colnames(data.person.F) = c('couple_F','ppnr_F','beepnr','YF','XF')
+data.person.F.wide = reshape(data.person.F, idvar = c('couple_F','ppnr_F'), timevar = "beepnr", direction = "wide")
+
+# Select data for the Male partner
+data.person.M = data.person[data.person$Gender=='M',]
+data.person.M = data.person.M[,c('couple','ppnr','beepnr','happy','enact_respons')]
+colnames(data.person.M) = c('couple_M','ppnr_M','beepnr','YM','XM')
+data.person.M.wide = reshape(data.person.M, idvar = c('couple_M','ppnr_M'), timevar = "beepnr", direction = "wide")
+
+# Combine wide data sets
+data.person.wide = cbind(data.person.F.wide,data.person.M.wide)
+# Data check
+sum(data.person.wide$couple_F == data.person.wide$couple_M) - nrow(data.person.wide)
+
+# Eliminate rows with Nas
+data.person.wide = data.person.wide[complete.cases(data.person.wide), ]
+
+# Centered the predictors
+data.person.wide.center = data.person.wide[,c("XF.1","XF.2","XF.3","XF.4","XF.5","XF.6","XF.7","XF.8","XF.9","XF.10","XM.1","XM.2","XM.3","XM.4","XM.5","XM.6","XM.7","XM.8","XM.9","XM.10")] -  rowMeans(data.person.wide[,c("XF.1","XF.2","XF.3","XF.4","XF.5","XF.6","XF.7","XF.8","XF.9","XF.10","XM.1","XM.2","XM.3","XM.4","XM.5","XM.6","XM.7","XM.8","XM.9","XM.10")])
+colnames(data.person.wide.center) = c("XF.c.1","XF.c.2","XF.c.3","XF.c.4","XF.c.5","XF.c.6","XF.c.7","XF.c.8","XF.c.9","XF.c.10","XM.c.1","XM.c.2","XM.c.3","XM.c.4","XM.c.5","XM.c.6","XM.c.7","XM.c.8","XM.c.9","XM.c.10")
+
+# Obtain data set with centered predictors
+data.person.wide = cbind(data.person.wide,data.person.wide.center)
+
+```
+
+### Summary predictors
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Distribution of the predictors X
+# Female partner
+mu.XF = mean(data.person$enact_respons[which(data.person$Gender=='F')],na.rm = TRUE)
+mu.XF
+sigma.XF = sd(data.person$enact_respons[which(data.person$Gender=='F')],na.rm = TRUE)
+sigma.XF
+sigma2.XF = var(data.person$enact_respons[which(data.person$Gender=='F')],na.rm = TRUE)
+sigma2.XF
+# Male partner
+mu.XM = mean(data.person$enact_respons[which(data.person$Gender=='M')],na.rm = TRUE)
+mu.XM
+sigma.XM = sd(data.person$enact_respons[which(data.person$Gender=='M')],na.rm = TRUE)
+sigma.XM
+sigma2.XM = var(data.person$enact_respons[which(data.person$Gender=='M')],na.rm = TRUE)
+sigma2.XM
+
+```
+
+### We first estimate L-APIM using SEM
+
+We applied Model 1: L-APIM with linear effect only to the Dyadic Interaction data to estimate actor and partner effects of partners’ enacted responsiveness on their happiness. For each participant, we select the first 10 time points, and we estimate Model 1 using SEM. We set the correlation between the partners’ enacted responsiveness to zero. We also assume that the correlation between the Level 1 errors is zero. We estimate the model using the ‘sem’ function from the lavaan package. 
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+## Estimate L-APIM based on multilevel model using lavaan
+model_LAPIM_Fit = '
+
+# random intercepts
+i.M =~ 1*YM.1 + 1*YM.2 + 1*YM.3 + 1*YM.4 + 1*YM.5 + 1*YM.6 + 1*YM.7 + 1*YM.8 + 1*YM.9 + 1*YM.10 
+i.F =~ 1*YF.1 + 1*YF.2 + 1*YF.3 + 1*YF.4 + 1*YF.5 + 1*YF.6 + 1*YF.7 + 1*YF.8 + 1*YF.9 + 1*YF.10 
+
+# random covariance structure
+i.M ~~ ivarA*i.M + iA*i.F
+i.F ~~ ivarB*i.F
+
+# mean structure: Predictors
+XM.1 ~ mu.XM*1 
+XM.2 ~ mu.XM*1 
+XM.3 ~ mu.XM*1 
+XM.4 ~ mu.XM*1 
+XM.5 ~ mu.XM*1 
+XM.6 ~ mu.XM*1 
+XM.7 ~ mu.XM*1 
+XM.8 ~ mu.XM*1 
+XM.9 ~ mu.XM*1 
+XM.10 ~ mu.XM*1 
+
+XF.1 ~ mu.XF*1 
+XF.2 ~ mu.XF*1 
+XF.3 ~ mu.XF*1 
+XF.4 ~ mu.XF*1 
+XF.5 ~ mu.XF*1 
+XF.6 ~ mu.XF*1 
+XF.7 ~ mu.XF*1 
+XF.8 ~ mu.XF*1 
+XF.9 ~ mu.XF*1
+XF.10 ~ mu.XF*1 
+
+# residual structure: Predictors
+XM.1 ~~ varXM*XM.1
+XM.2 ~~ varXM*XM.2
+XM.3 ~~ varXM*XM.3
+XM.4 ~~ varXM*XM.4
+XM.5 ~~ varXM*XM.5
+XM.6 ~~ varXM*XM.6
+XM.7 ~~ varXM*XM.7
+XM.8 ~~ varXM*XM.8
+XM.9 ~~ varXM*XM.9
+XM.10 ~~ varXM*XM.10
+
+XF.1 ~~ varXF*XF.1
+XF.2 ~~ varXF*XF.2
+XF.3 ~~ varXF*XF.3
+XF.4 ~~ varXF*XF.4
+XF.5 ~~ varXF*XF.5
+XF.6 ~~ varXF*XF.6
+XF.7 ~~ varXF*XF.7
+XF.8 ~~ varXF*XF.8
+XF.9 ~~ varXF*XF.9
+XF.10 ~~ varXF*XF.10
+
+# mean structure: Outcomes
+YM.1 ~ c.M*1 + a.MM*XM.1 + p.FM*XF.1 
+YM.2 ~ c.M*1 + a.MM*XM.2 + p.FM*XF.2
+YM.3 ~ c.M*1 + a.MM*XM.3 + p.FM*XF.3
+YM.4 ~ c.M*1 + a.MM*XM.4 + p.FM*XF.4
+YM.5 ~ c.M*1 + a.MM*XM.5 + p.FM*XF.5
+YM.6 ~ c.M*1 + a.MM*XM.6 + p.FM*XF.6
+YM.7 ~ c.M*1 + a.MM*XM.7 + p.FM*XF.7
+YM.8 ~ c.M*1 + a.MM*XM.8 + p.FM*XF.8
+YM.9 ~ c.M*1 + a.MM*XM.9 + p.FM*XF.9
+YM.10 ~ c.M*1 + a.MM*XM.10 + p.FM*XF.10
+
+YF.1 ~ c.F*1 + a.FF*XF.1  + p.MF*XM.1
+YF.2 ~ c.F*1 + a.FF*XF.2  + p.MF*XM.2
+YF.3 ~ c.F*1 + a.FF*XF.3  + p.MF*XM.3
+YF.4 ~ c.F*1 + a.FF*XF.4  + p.MF*XM.4
+YF.5 ~ c.F*1 + a.FF*XF.5  + p.MF*XM.5
+YF.6 ~ c.F*1 + a.FF*XF.6  + p.MF*XM.6
+YF.7 ~ c.F*1 + a.FF*XF.7  + p.MF*XM.7
+YF.8 ~ c.F*1 + a.FF*XF.8  + p.MF*XM.8
+YF.9 ~ c.F*1 + a.FF*XF.9  + p.MF*XM.9
+YF.10 ~ c.F*1 + a.FF*XF.10  + p.MF*XM.10
+
+# residual structure: Outcomes
+YM.1 ~~ varM*YM.1
+YM.2 ~~ varM*YM.2
+YM.3 ~~ varM*YM.3
+YM.4 ~~ varM*YM.4
+YM.5 ~~ varM*YM.5
+YM.6 ~~ varM*YM.6
+YM.7 ~~ varM*YM.7
+YM.8 ~~ varM*YM.8
+YM.9 ~~ varM*YM.9
+YM.10 ~~ varM*YM.10
+
+YF.1 ~~ varF*YF.1
+YF.2 ~~ varF*YF.2
+YF.3 ~~ varF*YF.3
+YF.4 ~~ varF*YF.4
+YF.5 ~~ varF*YF.5
+YF.6 ~~ varF*YF.6
+YF.7 ~~ varF*YF.7
+YF.8 ~~ varF*YF.8
+YF.9 ~~ varF*YF.9
+YF.10 ~~ varF*YF.10
+'
+
+# Estimate L-APIM using SEM
+fit_LAPIM_Fit = sem(model_LAPIM_Fit,data = data.person.wide)
+summary(fit_LAPIM_Fit)
+
+```
+
+# Simulate data from L-APIM using SEM
+
+Taking the estimated parameters of Model 1 based on the Dyadic Interaction data, we use the lavaan function ‘simulateData’ to generate 1000 data sets considering the following number of dyads: 60, 80, 100, 160, 200, and 300. For each of these data sets we estimate the L-APIM using structural equation modeling. Empirical power is then calculated as the proportion of replications in which the parameters of interest were estimated as significantly different from zero (at a specified α level of .05). 
+
+First, we write the model to simulate data from L-APIM:
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Set the model parameters
+model_LAPIM_Parameters = '
+
+# random intercepts
+i.M =~ 1*YM.1 + 1*YM.2 + 1*YM.3 + 1*YM.4 + 1*YM.5 + 1*YM.6 + 1*YM.7 + 1*YM.8 + 1*YM.9 + 1*YM.10 
+i.F =~ 1*YF.1 + 1*YF.2 + 1*YF.3 + 1*YF.4 + 1*YF.5 + 1*YF.6 + 1*YF.7 + 1*YF.8 + 1*YF.9 + 1*YF.10 
+
+# random covariance structure
+i.M ~~ 76.356*i.M + 30.684*i.F
+i.F ~~ 101.541*i.F
+
+# mean structure: Predictors
+XM.1 ~ 74.689*1 
+XM.2 ~ 74.689*1 
+XM.3 ~ 74.689*1 
+XM.4 ~ 74.689*1 
+XM.5 ~ 74.689*1 
+XM.6 ~ 74.689*1 
+XM.7 ~ 74.689*1 
+XM.8 ~ 74.689*1 
+XM.9 ~ 74.689*1 
+XM.10 ~ 74.689*1 
+
+XF.1 ~ 74.922*1 
+XF.2 ~ 74.922*1 
+XF.3 ~ 74.922*1 
+XF.4 ~ 74.922*1 
+XF.5 ~ 74.922*1 
+XF.6 ~ 74.922*1 
+XF.7 ~ 74.922*1 
+XF.8 ~ 74.922*1 
+XF.9 ~ 74.922*1
+XF.10 ~ 74.922*1 
+
+# residual structure: Predictors
+XM.1 ~~ 331.517*XM.1
+XM.2 ~~ 331.517*XM.2
+XM.3 ~~ 331.517*XM.3
+XM.4 ~~ 331.517*XM.4
+XM.5 ~~ 331.517*XM.5
+XM.6 ~~ 331.517*XM.6
+XM.7 ~~ 331.517*XM.7
+XM.8 ~~ 331.517*XM.8
+XM.9 ~~ 331.517*XM.9
+XM.10 ~~ 331.517*XM.10
+
+XF.1 ~~ 360.089*XF.1
+XF.2 ~~ 360.089*XF.2
+XF.3 ~~ 360.089*XF.3
+XF.4 ~~ 360.089*XF.4
+XF.5 ~~ 360.089*XF.5
+XF.6 ~~ 360.089*XF.6
+XF.7 ~~ 360.089*XF.7
+XF.8 ~~ 360.089*XF.8
+XF.9 ~~ 360.089*XF.9
+XF.10 ~~ 360.089*XF.10
+
+# mean structure: Outcomes
+YM.1 ~ 40.682*1 + 0.279*XM.1 + 0.074*XF.1 
+YM.2 ~ 40.682*1 + 0.279*XM.2 + 0.074*XF.2
+YM.3 ~ 40.682*1 + 0.279*XM.3 + 0.074*XF.3
+YM.4 ~ 40.682*1 + 0.279*XM.4 + 0.074*XF.4
+YM.5 ~ 40.682*1 + 0.279*XM.5 + 0.074*XF.5
+YM.6 ~ 40.682*1 + 0.279*XM.6 + 0.074*XF.6
+YM.7 ~ 40.682*1 + 0.279*XM.7 + 0.074*XF.7
+YM.8 ~ 40.682*1 + 0.279*XM.8 + 0.074*XF.8
+YM.9 ~ 40.682*1 + 0.279*XM.9 + 0.074*XF.9
+YM.10 ~ 40.682*1 + 0.279*XM.10 + 0.074*XF.10
+
+YF.1 ~ 39.243*1 + 0.283*XF.1 + 0.061*XM.1 
+YF.2 ~ 39.243*1 + 0.283*XF.2 + 0.061*XM.2
+YF.3 ~ 39.243*1 + 0.283*XF.3 + 0.061*XM.3
+YF.4 ~ 39.243*1 + 0.283*XF.4 + 0.061*XM.4
+YF.5 ~ 39.243*1 + 0.283*XF.5 + 0.061*XM.5
+YF.6 ~ 39.243*1 + 0.283*XF.6 + 0.061*XM.6
+YF.7 ~ 39.243*1 + 0.283*XF.7 + 0.061*XM.7
+YF.8 ~ 39.243*1 + 0.283*XF.8 + 0.061*XM.8
+YF.9 ~ 39.243*1 + 0.283*XF.9 + 0.061*XM.9
+YF.10 ~ 39.243*1 + 0.283*XF.10 + 0.061*XM.10
+
+# residual structure: Outcomes
+YM.1 ~~ 257.404*YM.1
+YM.2 ~~ 257.404*YM.2
+YM.3 ~~ 257.404*YM.3
+YM.4 ~~ 257.404*YM.4
+YM.5 ~~ 257.404*YM.5
+YM.6 ~~ 257.404*YM.6
+YM.7 ~~ 257.404*YM.7
+YM.8 ~~ 257.404*YM.8
+YM.9 ~~ 257.404*YM.9
+YM.10 ~~ 257.404*YM.10
+
+YF.1 ~~ 223.108*YF.1
+YF.2 ~~ 223.108*YF.2
+YF.3 ~~ 223.108*YF.3
+YF.4 ~~ 223.108*YF.4
+YF.5 ~~ 223.108*YF.5
+YF.6 ~~ 223.108*YF.6
+YF.7 ~~ 223.108*YF.7
+YF.8 ~~ 223.108*YF.8
+YF.9 ~~ 223.108*YF.9
+YF.10 ~~ 223.108*YF.10
+'
+```
+
+Next, we write the model to estimate L-APIM:
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+## Estimate L-APIM based on multilevel model using lavaan
+model_LAPIM = '
+
+# random intercepts
+i.M =~ 1*YM.1 + 1*YM.2 + 1*YM.3 + 1*YM.4 + 1*YM.5 + 1*YM.6 + 1*YM.7 + 1*YM.8 + 1*YM.9 + 1*YM.10 
+i.F =~ 1*YF.1 + 1*YF.2 + 1*YF.3 + 1*YF.4 + 1*YF.5 + 1*YF.6 + 1*YF.7 + 1*YF.8 + 1*YF.9 + 1*YF.10 
+
+# random covariance structure
+i.M ~~ ivarA*i.M + iA*i.F
+i.F ~~ ivarB*i.F
+
+# mean structure: Outcomes
+YM.1 ~ c.M*1 + a.MM*XM.1 + p.FM*XF.1 
+YM.2 ~ c.M*1 + a.MM*XM.2 + p.FM*XF.2
+YM.3 ~ c.M*1 + a.MM*XM.3 + p.FM*XF.3
+YM.4 ~ c.M*1 + a.MM*XM.4 + p.FM*XF.4
+YM.5 ~ c.M*1 + a.MM*XM.5 + p.FM*XF.5
+YM.6 ~ c.M*1 + a.MM*XM.6 + p.FM*XF.6
+YM.7 ~ c.M*1 + a.MM*XM.7 + p.FM*XF.7
+YM.8 ~ c.M*1 + a.MM*XM.8 + p.FM*XF.8
+YM.9 ~ c.M*1 + a.MM*XM.9 + p.FM*XF.9
+YM.10 ~ c.M*1 + a.MM*XM.10 + p.FM*XF.10
+
+YF.1 ~ c.F*1 + a.FF*XF.1 + p.MF*XM.1 
+YF.2 ~ c.F*1 + a.FF*XF.2 + p.MF*XM.2
+YF.3 ~ c.F*1 + a.FF*XF.3 + p.MF*XM.3
+YF.4 ~ c.F*1 + a.FF*XF.4 + p.MF*XM.4
+YF.5 ~ c.F*1 + a.FF*XF.5 + p.MF*XM.5
+YF.6 ~ c.F*1 + a.FF*XF.6 + p.MF*XM.6
+YF.7 ~ c.F*1 + a.FF*XF.7 + p.MF*XM.7
+YF.8 ~ c.F*1 + a.FF*XF.8 + p.MF*XM.8
+YF.9 ~ c.F*1 + a.FF*XF.9 + p.MF*XM.9
+YF.10 ~ c.F*1 + a.FF*XF.10 + p.MF*XM.10
+
+# residual structure: Outcomes
+YM.1 ~~ varM*YM.1
+YM.2 ~~ varM*YM.2
+YM.3 ~~ varM*YM.3
+YM.4 ~~ varM*YM.4
+YM.5 ~~ varM*YM.5
+YM.6 ~~ varM*YM.6
+YM.7 ~~ varM*YM.7
+YM.8 ~~ varM*YM.8
+YM.9 ~~ varM*YM.9
+YM.10 ~~ varM*YM.10
+
+YF.1 ~~ varF*YF.1
+YF.2 ~~ varF*YF.2
+YF.3 ~~ varF*YF.3
+YF.4 ~~ varF*YF.4
+YF.5 ~~ varF*YF.5
+YF.6 ~~ varF*YF.6
+YF.7 ~~ varF*YF.7
+YF.8 ~~ varF*YF.8
+YF.9 ~~ varF*YF.9
+YF.10 ~~ varF*YF.10
+'
+```
+
+## Simulation-based power analysis using SEM
+
+Functions for conducting simulation-based power analysis for the L-APIM using SEM 
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# We first create a function to simulate data from the L-APIM model and estimate the model using SEM
+
+summary.LAPIM.SEM = function(model_LAPIM_Parameters,model_LAPIM,N.dyad){
+
+data.wide = simulateData(model_LAPIM_Parameters, sample.nobs=N.dyad)
+fit_LAPIM = sem(model_LAPIM,data = data.wide)
+summary_fit_LAPIM = parameterEstimates(fit_LAPIM)
+summary_fit_LAPIM = data.frame(summary_fit_LAPIM)
+
+# Obtain p-value
+p.values.list = summary_fit_LAPIM$pvalue
+names(p.values.list) = summary_fit_LAPIM$label
+p.values.list = p.values.list[-which(is.na(p.values.list)==TRUE)]
+
+# Obtain estimated effects
+estimate.list = summary_fit_LAPIM$est
+names(estimate.list) = summary_fit_LAPIM$label
+estimate.list = estimate.list[-which(summary_fit_LAPIM$label=='')]
+
+return(list(summary.SEM=summary_fit_LAPIM,p.values=p.values.list,estimates=estimate.list))
+}
+
+# Function for conducting the simulation based power analysis
+
+Power.sim.LAPIM.SEM = function(model_LAPIM_Parameters,model_LAPIM,N.dyad,alpha,R){
+
+# We perform the Monte Carlo simulation
+# Set the session to use parallel computing
+plan(multisession)
+
+# Estimate model
+Simulation.LAPIM.SEM = future_lapply(1:R, function(r) summary.LAPIM.SEM(model_LAPIM_Parameters,model_LAPIM,N.dyad),
+future.seed = 0xBEEF)
+
+# Obtain matrix for computing power
+Simulation.LAPIM.SEM.power = lapply(1:R, function(r) Simulation.LAPIM.SEM[[r]]$p.values<alpha)
+Simulation.LAPIM.SEM.power = matrix(unlist(Simulation.LAPIM.SEM.power), nrow = R, byrow = TRUE)
+# Obtain power
+Power.LAPIM.SEM = colMeans(Simulation.LAPIM.SEM.power)
+names(Power.LAPIM.SEM) = names(Simulation.LAPIM.SEM[[1]]$p.values)
+# Obtain std. error of power
+Power.se.LAPIM.SEM = sqrt(Power.LAPIM.SEM*(1-Power.LAPIM.SEM)/R)
+names(Power.se.LAPIM.SEM) = names(Power.LAPIM.SEM)
+  
+# Obtain matrix with the estimated effects in each replicate
+Simulation.LAPIM.SEM.estimates = lapply(1:R, function(r) Simulation.LAPIM.SEM[[r]]$estimates)
+Simulation.LAPIM.SEM.estimates = matrix(unlist(Simulation.LAPIM.SEM.estimates), nrow = R, byrow = TRUE)
+
+# Obtain average estimated effect
+Estimate.LAPIM.SEM = colMeans(Simulation.LAPIM.SEM.estimates)
+names(Estimate.LAPIM.SEM) = names(Simulation.LAPIM.SEM[[1]]$estimates)
+# Obtain std. error of power
+Estimate.se.LAPIM.SEM = apply(Simulation.LAPIM.SEM.estimates,2,sd)/sqrt(R)
+names(Estimate.se.LAPIM.SEM) = names(Estimate.LAPIM.SEM)
+
+return(list(Power.LAPIM.SEM = Power.LAPIM.SEM, Power.se.LAPIM.SEM=Power.se.LAPIM.SEM,
+            Estimate.LAPIM.SEM = Estimate.LAPIM.SEM, Estimate.se.LAPIM.SEM=Estimate.se.LAPIM.SEM))
+}
+
+```
+
+We simulate data using lavaan and we estimate L-APIM using SEM, and we compute power:
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Parameters of the Monte Carlo simulation
+R = 1000
+alpha = 0.05
+N.dyad = c(60,80,100,160,200,300)
+
+# Conduct the simulation-based power analysis
+Simulation.Power.LAPIM.SEM = future_lapply(1:length(N.dyad), function(i) Power.sim.LAPIM.SEM(model_LAPIM_Parameters,model_LAPIM,N.dyad[i],alpha,R),
+future.seed = 0xBEEF)
+
+# Obtain the average effect of the estimated coefficients and power
+Coef.LAPIM.SEM.names = c('c.F','c.M','a.FF','p.MF','a.MM','p.FM') 
+Coef.LAPIM.SEM = matrix(0,length(N.dyad),length(Coef.LAPIM.SEM.names))
+Coef.se.LAPIM.SEM = matrix(0,length(N.dyad),length(Coef.LAPIM.SEM.names))
+Power.LAPIM.SEM = matrix(0,length(N.dyad),length(Coef.LAPIM.SEM.names))
+Power.se.LAPIM.SEM = matrix(0,length(N.dyad),length(Coef.LAPIM.SEM.names))
+for (i in 1:length(N.dyad)){
+Coef.LAPIM.SEM[i,] = Simulation.Power.LAPIM.SEM[[i]]$Estimate.LAPIM.SEM[Coef.LAPIM.SEM.names]
+Coef.se.LAPIM.SEM[i,] = Simulation.Power.LAPIM.SEM[[i]]$Estimate.se.LAPIM.SEM[Coef.LAPIM.SEM.names]
+Power.LAPIM.SEM[i,] = Simulation.Power.LAPIM.SEM[[i]]$Power.LAPIM.SEM[Coef.LAPIM.SEM.names]
+Power.se.LAPIM.SEM[i,] = Simulation.Power.LAPIM.SEM[[i]]$Power.se.LAPIM.SEM[Coef.LAPIM.SEM.names]
+}
+
+colnames(Coef.LAPIM.SEM) = colnames(Coef.se.LAPIM.SEM) = colnames(Power.LAPIM.SEM) = colnames(Power.se.LAPIM.SEM) = c('c.F','c.M','a.FF','p.MF','a.MM','p.FM')
+
+rownames(Coef.LAPIM.SEM) = rownames(Coef.se.LAPIM.SEM) = rownames(Power.LAPIM.SEM) = rownames(Power.se.LAPIM.SEM) = N.dyad
+
+# Estimated power
+kable(Power.LAPIM.SEM, format = "markdown", digits = 2)
+# Standard error of the estimated power
+kable(Power.se.LAPIM.SEM, format = "markdown", digits = 2)
+# Estimated effect
+kable(Coef.LAPIM.SEM, format = "markdown", digits = 2)
+# Standard error of the estimated power
+kable(Coef.se.LAPIM.SEM, format = "markdown", digits = 2)
+
+# Variance components
+# Obtain the average estimated variance components
+Coef.var.LAPIM.SEM.names = c('varF','varM','ivarB','ivarA','iA') 
+Coef.var.LAPIM.SEM = matrix(0,length(N.dyad),length(Coef.var.LAPIM.SEM.names))
+Coef.var.se.LAPIM.SEM = matrix(0,length(N.dyad),length(Coef.var.LAPIM.SEM.names))
+for (i in 1:length(N.dyad)){
+Coef.var.LAPIM.SEM[i,] = Simulation.Power.LAPIM.SEM[[i]]$Estimate.LAPIM.SEM[Coef.var.LAPIM.SEM.names]
+Coef.var.se.LAPIM.SEM[i,] = Simulation.Power.LAPIM.SEM[[i]]$Estimate.se.LAPIM.SEM[Coef.var.LAPIM.SEM.names]
+}
+
+colnames(Coef.var.LAPIM.SEM) = colnames(Coef.var.se.LAPIM.SEM) =  c('sigma2.eps.F','sigma2.eps.M','sigma2.nu.F','sigma2.nu.M','cov.nu.F.M')
+
+rownames(Coef.var.LAPIM.SEM) = rownames(Coef.var.se.LAPIM.SEM) = N.dyad
+
+# Estimated effect of the variance components
+kable(Coef.var.LAPIM.SEM, format = "markdown", digits = 2)
+# Standard error of the variance components
+kable(Coef.var.se.LAPIM.SEM, format = "markdown", digits = 2)
+
+```
+
+# Simulation-based power analysis using PowerLAPIM
+
+Next, we use the application PowerLAPIM to conduct the simulation-based power analysis. We select the population model of interest (i.e., Model 1). We indicate that we want to consider the following values for the number of dyads: 60, 80, 100, 160, 200, and 300. We set the number of measurements within each participant to 10. We fill in values for the model parameters and we indicate that the predictors (i.e., enacted response) should be person-mean centered. We set the Type I error, α, to .05 and the number of Monte Carlo replicates to 1,000, and we choose the Maximizing the restricted log-likelihood option when specifying the estimation method. Finally, we click on Compute Power.
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# We set the parameter values of Model 9
+Model = 1
+N.dyad = c("60","80","100","160","200","300")
+N0.dyad = NULL
+N1.dyad = NULL
+T.obs = 10  
+c.F = 39.243
+c.M = 40.682
+a.FF = 0.283
+p.MF = 0.061
+a.FF2 = NULL
+p.MF2 = NULL 
+a.MM = 0.279
+p.FM = 0.074
+a.MM2 = NULL
+p.FM2 = NULL 
+c = NULL
+a = NULL
+a.2 = NULL
+p = NULL
+p.2 = NULL                             
+c.F0 = NULL
+c.F1 = NULL
+c.M0 = NULL
+c.M1 = NULL
+a.FF0 = NULL
+a.FF1 = NULL
+a.FF02 = NULL
+a.FF12 = NULL
+p.MF0 = NULL
+p.MF1 = NULL
+p.MF02 = NULL
+p.MF12 = NULL
+a.MM0 = NULL
+a.MM1 = NULL
+a.MM02 = NULL
+a.MM12 = NULL
+p.FM0 = NULL
+p.FM1 = NULL
+p.FM02 = NULL
+p.FM12 = NULL
+c0 = NULL
+c1 = NULL
+a0 = NULL
+a1 = NULL
+a02 = NULL
+a12 = NULL
+p0 = NULL
+p1 = NULL
+p02 = NULL
+p12 = NULL
+b.F = NULL
+b.M = NULL
+b.FF = NULL
+b.MF = NULL
+b.MM = NULL
+b.FM = NULL
+b.FF2 = NULL
+b.MF2 = NULL
+b.MM2 = NULL
+b.FM2 = NULL
+d.F = NULL
+d.M = NULL
+d.FF = NULL
+d.MF = NULL
+d.MM = NULL
+d.FM = NULL
+d.FF2 = NULL
+d.MF2 = NULL
+d.MM2 = NULL
+d.FM2 = NULL
+b = NULL
+b.a = NULL
+b.a2 = NULL
+b.p = NULL
+b.p2 = NULL
+d = NULL
+d.a = NULL
+d.a2 = NULL
+d.p = NULL
+d.p2 = NULL
+rho.YF = NULL
+rho.YM = NULL
+rho.Y = NULL
+rho.YF0 = NULL
+rho.YF1 = NULL
+rho.YM0 = NULL
+rho.YM1 = NULL
+sigma.eps.F = sqrt(223.108)
+sigma.eps.M = sqrt(257.404)
+rho.eps.FM = 0
+sigma.nu.F = sqrt(101.541)
+sigma.nu.M = sqrt(76.356)
+rho.nu.F.M = 30.684/(sigma.eps.F*sigma.eps.M)
+sigma.nu = NULL
+mu.XF = 74.922
+sigma.XF = sqrt(360.089)
+mu.XM = 74.689
+sigma.XM = sqrt(331.517)
+rho.X = 0
+mu.XF0 = NULL
+mu.XF1 = NULL
+sigma.XF0 = NULL
+sigma.XF1 = NULL
+mu.XM0 = NULL
+mu.XM1 = NULL
+sigma.XM0 = NULL
+sigma.XM1 = NULL
+rho.X0 = NULL
+rho.X1 = NULL
+mu.W = NULL
+sigma.W = NULL
+prob.D = NULL
+is.center.X = TRUE
+is.center.W = NULL
+R = 1000
+alpha = 0.05
+is.REML = FALSE
+```
+
+## Conduct power analysis using PowerLAPIM
+
+```{r, echo=TRUE, warning=FALSE, eval=TRUE}
+# Conduct power analysis
+Fit.Model.LAPIM = Sim.model.Dyad.IL(Model,N.dyad,N0.dyad,N1.dyad,T.obs,  
+c.F,c.M,a.FF,p.MF,a.FF2,p.MF2,a.MM,p.FM,a.MM2,p.FM2,
+c,a,a.2,p,p.2,
+c.F0,c.F1,c.M0,c.M1,a.FF0,a.FF1,a.FF02,a.FF12,p.MF0,p.MF1,p.MF02,p.MF12,
+a.MM0,a.MM1,a.MM02,a.MM12,p.FM0,p.FM1,p.FM02,p.FM12,
+c0,c1,a0,a1,a02,a12,p0,p1,p02,p12,
+b.F,b.M,b.FF,b.MF,b.MM,b.FM,b.FF2,b.MF2,b.MM2,b.FM2,
+d.F,d.M,d.FF,d.MF,d.MM,d.FM,d.FF2,d.MF2,d.MM2,d.FM2,
+b,b.a,b.a2,b.p,b.p2,
+d,d.a,d.a2,d.p,d.p2,
+rho.YF,rho.YM,rho.Y,rho.YF0,rho.YF1,rho.YM0,rho.YM1,
+sigma.eps.F,sigma.eps.M,rho.eps.FM,
+sigma.nu.F,sigma.nu.M,rho.nu.F.M,sigma.nu,
+mu.XF,sigma.XF,mu.XM,sigma.XM,rho.X,
+mu.XF0,mu.XF1,sigma.XF0,sigma.XF1,mu.XM0,mu.XM1,sigma.XM0,sigma.XM1,rho.X0,rho.X1,
+mu.W,sigma.W,prob.D,
+is.center.X,is.center.W,R,alpha,is.REML)
+
+# Simulation results for the power curve
+kable(Fit.Model.LAPIM$power.curve, format = "markdown", digits = 2)
+
+# Simulation results for the fixed effects
+kable(Fit.Model.LAPIM$coef.sim, format = "markdown", digits = 2)
+
+# Simulation results for the variance components
+kable(Fit.Model.LAPIM$cov.sim, format = "markdown", digits = 2)
+```
