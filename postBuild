@@ -1,0 +1,3 @@
+#!/bin/bash
+
+echo 'setwd("/home/jovyan/vtb9e_src/PowerLAPIM R Package")' >> /home/jovyan/.Rprofile
